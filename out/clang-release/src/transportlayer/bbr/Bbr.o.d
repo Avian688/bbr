@@ -1,10 +1,10 @@
-../out/clang-debug/src/transportlayer/bbr/Bbr.o: \
+../out/clang-release/src/transportlayer/bbr/Bbr.o: \
   transportlayer/bbr/Bbr.cc transportlayer/bbr/Bbr.h \
   ../../inet4.4/src/inet/transportlayer/tcp/Tcp.h \
   ../../inet4.4/src/inet/common/lifecycle/ModuleOperations.h \
   ../../inet4.4/src/inet/common/lifecycle/LifecycleOperation.h \
   ../../inet4.4/src/inet/common/INETDefs.h \
-  ../../inet4.4/src/inet/common/precompiled_debug.h \
+  ../../inet4.4/src/inet/common/precompiled_release.h \
   ../../inet4.4/src/inet/common/precompiled.h \
   /Users/av288/omnetpp-6.0/include/omnetpp.h \
   ../../inet4.4/src/inet/opp_defines.h ../../inet4.4/src/inet/features.h \
@@ -109,7 +109,7 @@ transportlayer/bbr/Bbr.h:
 
 ../../inet4.4/src/inet/common/INETDefs.h:
 
-../../inet4.4/src/inet/common/precompiled_debug.h:
+../../inet4.4/src/inet/common/precompiled_release.h:
 
 ../../inet4.4/src/inet/common/precompiled.h:
 
