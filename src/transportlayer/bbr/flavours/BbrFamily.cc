@@ -39,9 +39,16 @@ BbrFamily::BbrFamily() : TcpTahoeRenoFamily(),
 {
 }
 
-void BbrFamily::receivedDataAck(uint32_t firstSeqAcked, const Ptr<const SkbInfo> skbInfo)
+void BbrFamily::receivedDataAck(uint32_t firstSeqAcked)
 {
     TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
+}
+
+void BbrFamily::receivedOutOfOrderSegment(const Ptr<const SkbInfo> skbInfo)
+{
+    state->ack_now = true;
+    EV_INFO << "Out-of-order segment, sending immediate ACK\n";
+    dynamic_cast<BbrConnection*>(conn)->sendSkbInfoAck(skbInfo);
 }
 
 void BbrFamily::receiveSeqChanged(const Ptr<const SkbInfo> skbInfo)
@@ -94,7 +101,6 @@ void BbrFamily::receivedDuplicateAck() {
             state->recoveryPoint = state->snd_max; // HighData = snd_max
             state->lossRecovery = true;
             EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-            conn->emit(lossRecoverySignal, 1);
 
             state->snd_cwnd = 3000;
             state->ssthresh = 100000000000;
@@ -102,7 +108,6 @@ void BbrFamily::receivedDuplicateAck() {
             // Fast Retransmission: retransmit missing segment without waiting
             // for the REXMIT timer to expire
             conn->retransmitOneSegment(false);
-            conn->emit(highRxtSignal, state->highRxt);
         }
 
         conn->emit(cwndSignal, state->snd_cwnd);
@@ -118,6 +123,40 @@ void BbrFamily::receivedDuplicateAck() {
             conn->sendDataDuringLossRecoveryPhase(state->snd_cwnd);
         }
     }
+}
+
+bool BbrFamily::sendData(bool sendCommandInvoked)
+{
+    // RFC 2581, pages 7 and 8: "When TCP has not received a segment for
+    // more than one retransmission timeout, cwnd is reduced to the value
+    // of the restart window (RW) before transmission begins.
+    // For the purposes of this standard, we define RW = IW.
+    // (...)
+    // Using the last time a segment was received to determine whether or
+    // not to decrease cwnd fails to deflate cwnd in the common case of
+    // persistent HTTP connections [HTH98].
+    // (...)
+    // Therefore, a TCP SHOULD set cwnd to no more than RW before beginning
+    // transmission if the TCP has not sent data in an interval exceeding
+    // the retransmission timeout."
+    if (!conn->isSendQueueEmpty()) { // do we have any data to send?
+        if ((simTime() - state->time_last_data_sent) > state->rexmit_timeout) {
+            // RFC 5681, page 11: "For the purposes of this standard, we define RW = min(IW,cwnd)."
+            if (state->increased_IW_enabled)
+                state->snd_cwnd = state->snd_mss;//state->snd_cwnd = std::min(std::min(4 * state->snd_mss, std::max(2 * state->snd_mss, (uint32_t)4380)), state->snd_cwnd);
+            else
+                state->snd_cwnd = state->snd_mss;
+
+            EV_INFO << "Restarting idle connection, CWND is set to " << state->snd_cwnd << "\n";
+        }
+    }
+
+    //
+    // Send window is effectively the minimum of the congestion window (cwnd)
+    // and the advertised window (snd_wnd).
+    //
+    dynamic_cast<BbrConnection*>(conn)->sendPendingData();
+    return true;
 }
 
 } // namespace tcp

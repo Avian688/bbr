@@ -63,12 +63,14 @@ protected:
 
     virtual void initConnection(TcpOpenCommand *openCmd) override;
     virtual void initClonedConnection(TcpConnection *listenerConn) override;
-    virtual void configureStateVariables();
+    virtual void configureStateVariables() override;
     virtual void process_SEND(TcpEventCode& event, TcpCommand *tcpCommand, cMessage *msg) override;
     virtual TcpConnection *cloneListeningConnection() override;
 
     virtual void updateSample(uint32_t delivered, uint32_t lost, bool is_sack_reneg, uint32_t priorInFlight, simtime_t minRtt);
-    virtual void updateInFlight();
+
+    virtual void calculateAppLimited();
+
 public:
     virtual bool processTimer(cMessage *msg) override;
     virtual uint32_t sendSegment(uint32_t bytes) override;
@@ -88,26 +90,37 @@ public:
 
     virtual simtime_t getPacingRate();
 
-    virtual Packet* addSkbInfoTags(Packet* packet);
+    virtual uint32_t getLastAckedSackedBytes();
+
+    virtual void addSkbInfoTags(const Ptr<TcpHeader> &tcpHeader, uint32_t payloadBytes);
 
     virtual void setPipe() override;
 
-    //virtual bool sendData(uint32_t congestionWindow) override;
+    virtual void skbDelivered(const Ptr<const SkbInfo> skbInfo);
 
-    //virtual void retransmitOneSegment(bool called_at_rto) override;
+    virtual void retransmitOneSegment(bool called_at_rto) override;
 
-    /** Utility: retransmit all from snd_una to snd_max */
-    //virtual void retransmitData() override;
+    virtual bool sendDataDuringLossRecovery(uint32_t congestionWindow);
+
+    virtual void cancelPaceTimer();
+
+    virtual void updateInFlight();
+
+    virtual void sendPendingData();
+
+    virtual void retransmitNext(bool timeout);
 private:
     virtual void processPaceTimer();
-    void addPacket(Packet *packet);
-    //void addPacketToPaceBuffer(uint32_t packetSize);
 
+    void addPacket(Packet *packet);
 protected:
     cOutVector paceValueVec;
     cOutVector bufferedPacketsVec;
     bool pace;
     simtime_t paceStart;
+    simtime_t timerDifference;
+
+    uint32_t m_lastAckedSackedBytes;
 
     uint32_t m_delivered;
     simtime_t m_deliveredTime;
@@ -125,6 +138,9 @@ protected:
 
     uint32_t calcBytesInFlight;
     uint32_t bufferedBytes;
+
+    bool retransmitOnePacket;
+    bool retransmitAfterTimeout;
 
 public:
     virtual void sendSkbInfoAck(const Ptr<const SkbInfo> skbInfo);

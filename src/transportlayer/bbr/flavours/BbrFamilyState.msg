@@ -88,10 +88,9 @@ struct BbrFamilyStateVariables extends TcpTahoeRenoFamilyStateVariables
     uint32_t m_ackEpochAckedResetThresh = 1 << 12;
     uint32_t m_ackEpochAcked = 0;
     
-    uint32_t m_segmentSize = 1480;
+    uint32_t m_segmentSize;
     
-    
-    
+    uint32_t prevMaxBandwidth;
 };
 
 cplusplus(BbrFamilyStateVariables) {{

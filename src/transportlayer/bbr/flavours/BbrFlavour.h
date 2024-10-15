@@ -62,7 +62,13 @@ class BbrFlavour : public BbrFamily
     static simsignal_t stateSignal;
     static simsignal_t pacingGainSignal;
     static simsignal_t targetCwndSignal;
+    static simsignal_t estimatedBdpSignal;
+    static simsignal_t priorCwndSignal;
+    static simsignal_t roundCountSignal;
 
+    static simsignal_t recoverSignal;
+    static simsignal_t lossRecoverySignal;
+    static simsignal_t highRxtSignal;
     simtime_t rtt;
     std::default_random_engine generator;
     uint32_t m_extraAcked[2] = {0, 0};
@@ -157,7 +163,7 @@ class BbrFlavour : public BbrFamily
 
     virtual void established(bool active) override;
 
-    virtual void receivedDataAck(uint32_t firstSeqAcked, const Ptr<const SkbInfo> skbInfo) override;
+    virtual void receivedDataAck(uint32_t firstSeqAcked) override;
 
     /** Redefine what should happen when dupAck was received, to add congestion window management */
     virtual void receivedDuplicateAck() override;
@@ -168,6 +174,7 @@ class BbrFlavour : public BbrFamily
     virtual double getFirstSentTime() { return state->firstSentTime;};
     virtual double getDeliveredTime() { return state->deliveredTime;};
 
+    virtual uint32_t getCwnd() { return state->snd_cwnd;};
     };
 
 } // namespace tcp

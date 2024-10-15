@@ -13,6 +13,7 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
+#include <algorithm>
 #include "BbrConnection.h"
 
 #include <inet/transportlayer/tcp/TcpSendQueue.h>
@@ -51,11 +52,13 @@ void BbrConnection::initConnection(TcpOpenCommand *openCmd)
 
     paceMsg = new cMessage("pacing message");
     intersendingTime = 0.0000001;
+    timerDifference = 0;
     paceValueVec.setName("paceValue");
     bufferedPacketsVec.setName("bufferedPackets");
     m_firstSentTime = simTime();
     m_deliveredTime = simTime();
-
+    retransmitOnePacket = false;
+    retransmitAfterTimeout = false;
     pace = true;
 }
 
@@ -74,10 +77,12 @@ TcpConnection *BbrConnection::cloneListeningConnection()
 void BbrConnection::initClonedConnection(TcpConnection *listenerConn)
 {
     paceMsg = new cMessage("pacing message");
-    intersendingTime = 0.00001;
+    intersendingTime = 0.0000001;
     paceValueVec.setName("paceValue");
     bufferedPacketsVec.setName("bufferedPackets");
     pace = false;
+    retransmitOnePacket = false;
+    retransmitAfterTimeout = false;
     TcpConnection::initClonedConnection(listenerConn);
 }
 
@@ -546,7 +551,6 @@ TcpEventCode BbrConnection::processSegment1stThru8th(Packet *tcpSegment, const P
                 if (seqGreater(state->snd_una, old_snd_una)) {
                     // notify
 
-                    //tcpHeader->addTagIfAbsent<SkbInfo>()->setM_deliveredTime(simTime().dbl());
                     tcpAlgorithm->receivedDataAck(old_snd_una);
 
                     // in the receivedDataAck we need the old value
@@ -580,7 +584,7 @@ TcpEventCode BbrConnection::processSegment1stThru8th(Packet *tcpSegment, const P
                         }
                     }
 
-                    tcpAlgorithm->receivedOutOfOrderSegment();
+                    dynamic_cast<BbrFamily*>(tcpAlgorithm)->receivedOutOfOrderSegment(tcpHeader->getTag<SkbInfo>());
                 }
                 else {
                     // forward data to app
@@ -784,12 +788,8 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 
         state->gotEce = tcpHeader->getEceBit();
     }
-    calcBytesInFlight = calcBytesInFlight - state->snd_mss;
-    emit(mbytesInFlightTotalSignal, bufferedBytes);
 
-    updateInFlight();
-    emit(mbytesInFlightSignal, m_bytesInFlight);
-    emit(mbytesLossSignal, m_bytesLoss);
+    calcBytesInFlight -= payloadLength;
     //
     //"
     //  If SND.UNA < SEG.ACK =< SND.NXT then, set SND.UNA <- SEG.ACK.
@@ -834,7 +834,21 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 
             // we need to update send window even if the ACK is a dupACK, because rcv win
             // could have been changed if faulty data receiver is not respecting the "do not shrink window" rule
+
+            if((tcpHeader->findTag<SkbInfo>())){
+                skbDelivered(tcpHeader->getTag<SkbInfo>());
+            }
+
             updateWndInfo(tcpHeader);
+            uint32_t currentDelivered  = m_delivered - previousDelivered;
+            m_lastAckedSackedBytes = currentDelivered;
+
+            updateInFlight();
+
+            uint32_t currentLost = m_bytesLoss;
+            uint32_t lost = (currentLost > previousLost) ? currentLost - previousLost : previousLost - currentLost;
+
+            updateSample(currentDelivered, lost, false, priorInFlight, dynamic_cast<BbrFamily*>(tcpAlgorithm)->getConnMinRtt());
 
             tcpAlgorithm->receivedDuplicateAck();
         }
@@ -886,47 +900,33 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         }
 
         // acked data no longer needed in send queue
+
         sendQueue->discardUpTo(discardUpToSeq);
 
         // acked data no longer needed in rexmit queue
-        if (state->sack_enabled)
+        if (state->sack_enabled){
             rexmitQueue->discardUpTo(discardUpToSeq);
+        }
 
+        if((tcpHeader->findTag<SkbInfo>())){
+            skbDelivered(tcpHeader->getTag<SkbInfo>());
+        }
         updateWndInfo(tcpHeader);
-
+        uint32_t currentDelivered  = m_delivered - previousDelivered;
+        m_lastAckedSackedBytes = currentDelivered;
         // if segment contains data, wait until data has been forwarded to app before sending ACK,
-        // otherwise we would use an old ACKNo skibidi ohio rizzed up adin ross on kai cenats stream while duke dennis was fanum taxing livvy dunne
+        // otherwise we would use an old ACKNo
         if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
             // notify
-            if(tcpHeader->findTag<SkbInfo>()){
-                if(m_deliveredTime != SIMTIME_MAX){
 
-                    m_delivered += tcpHeader->getTag<SkbInfo>()->getPayloadBytes();
-                    m_deliveredTime = simTime();
+            updateInFlight();
 
-                    if (m_rateSample.m_priorDelivered == 0 || tcpHeader->getTag<SkbInfo>()->getDelivered() > m_rateSample.m_priorDelivered)
-                    {
-                        m_rateSample.m_ackElapsed = simTime() - tcpHeader->getTag<SkbInfo>()->getDeliveredTime();
-                        m_rateSample.m_priorDelivered = tcpHeader->getTag<SkbInfo>()->getDelivered();
-                        m_rateSample.m_priorTime = tcpHeader->getTag<SkbInfo>()->getDeliveredTime();
-                        m_rateSample.m_isAppLimited = false;
-                        m_rateSample.m_sendElapsed = tcpHeader->getTag<SkbInfo>()->getLastSent() - tcpHeader->getTag<SkbInfo>()->getFirstSent();
+            uint32_t currentLost = m_bytesLoss;
+            uint32_t lost = (currentLost > previousLost) ? currentLost - previousLost : previousLost - currentLost;
 
-                        m_firstSentTime = tcpHeader->getTag<SkbInfo>()->getLastSent();
-                        emit(msendElapsedSignal, m_rateSample.m_sendElapsed);
-                        emit(mackElapsedSignal, m_rateSample.m_ackElapsed);
-                        emit(mFirstSentTimeSignal, tcpHeader->getTag<SkbInfo>()->getFirstSent());
-                        emit(mLastSentTimeSignal, tcpHeader->getTag<SkbInfo>()->getLastSent());
-                    }
+            updateSample(currentDelivered, lost, false, priorInFlight, dynamic_cast<BbrFamily*>(tcpAlgorithm)->getConnMinRtt());
 
-                    m_txItemDelivered = tcpHeader->getTag<SkbInfo>()->getDelivered();
-                    //m_firstSentTime = tcpHeader->getTag<SkbInfo>()->getLastSent();
-
-                    uint32_t currentDelivered  = m_delivered - previousDelivered;
-                    updateSample(currentDelivered, 0, false, priorInFlight, dynamic_cast<BbrFamily*>(tcpAlgorithm)->getConnMinRtt());
-                }
-                dynamic_cast<BbrFamily*>(tcpAlgorithm)->receivedDataAck(old_snd_una, tcpHeader->getTag<SkbInfo>());
-            }
+            dynamic_cast<BbrFamily*>(tcpAlgorithm)->receivedDataAck(old_snd_una);
             // in the receivedDataAck we need the old value
             state->dupacks = 0;
 
@@ -942,12 +942,40 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         state->dupacks = 0;
 
         emit(dupAcksSignal, state->dupacks);
-
+        sendPendingData();
         return false; // means "drop"
     }
-
+    sendPendingData();
     return true;
 }
+
+void BbrConnection::skbDelivered(const Ptr<const SkbInfo> skbInfo)
+{
+    if(skbInfo->getDeliveredTime() != SIMTIME_MAX){
+
+        m_delivered += skbInfo->getPayloadBytes();
+        calcBytesInFlight -= skbInfo->getPayloadBytes();
+        m_deliveredTime = simTime();
+
+        if (m_rateSample.m_priorDelivered == 0 || skbInfo->getDelivered() > m_rateSample.m_priorDelivered)
+        {
+            m_rateSample.m_ackElapsed = simTime() - skbInfo->getDeliveredTime();
+            m_rateSample.m_priorDelivered = skbInfo->getDelivered();
+            m_rateSample.m_priorTime = skbInfo->getDeliveredTime();
+            m_rateSample.m_sendElapsed = skbInfo->getLastSent() - skbInfo->getFirstSent();
+            m_rateSample.m_isAppLimited = skbInfo->isAppLimited();
+            m_firstSentTime = skbInfo->getLastSent();
+
+            emit(msendElapsedSignal, m_rateSample.m_sendElapsed);
+            emit(mackElapsedSignal, m_rateSample.m_ackElapsed);
+            emit(mFirstSentTimeSignal, skbInfo->getFirstSent());
+            emit(mLastSentTimeSignal, skbInfo->getLastSent());
+        }
+
+        m_txItemDelivered = skbInfo->getDelivered();
+    }
+}
+
 
 void BbrConnection::sendSkbInfoAck(const Ptr<const SkbInfo> skbInfo)
 {
@@ -988,7 +1016,7 @@ void BbrConnection::sendSkbInfoAck(const Ptr<const SkbInfo> skbInfo)
     tcpHeader->addTagIfAbsent<SkbInfo>()->setLastSent(skbInfo->getLastSent());
     tcpHeader->addTagIfAbsent<SkbInfo>()->setDeliveredTime(skbInfo->getDeliveredTime());
     tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(skbInfo->getPayloadBytes());
-
+    tcpHeader->addTagIfAbsent<SkbInfo>()->setIsAppLimited((m_appLimited != 0));
     Packet *fp = new Packet("TcpAck");
     // rfc-3168 page 20: pure ack packets must be sent with not-ECT codepoint
     state->sndAck = true;
@@ -1002,6 +1030,26 @@ void BbrConnection::sendSkbInfoAck(const Ptr<const SkbInfo> skbInfo)
 
     // notify
     tcpAlgorithm->ackSent();
+}
+
+void BbrConnection::calculateAppLimited()
+{
+    uint32_t cWnd = dynamic_cast<BbrFlavour*>(tcpAlgorithm)->getCwnd();
+    uint32_t in_flight = m_bytesInFlight;
+    const uint32_t lostOut = m_bytesLoss;
+    uint32_t segmentSize = state->snd_mss;
+    const uint32_t retransOut = 0;
+    //const uint32_t tailSeq;
+    //const uint32_t nextTx;
+
+    /* Missing checks from Linux:
+     * - Nothing in sending host's qdisc queues or NIC tx queue. NOT IMPLEMENTED
+     */
+    //tailSeq - nextTx < static_cast<int32_t>(segmentSize) &&
+    if (in_flight < cWnd && lostOut <= retransOut)             // All lost packets have been retransmitted.
+    {
+        m_appLimited = std::max<uint32_t>(m_delivered + in_flight, 1);
+    }
 }
 
 bool BbrConnection::processTimer(cMessage *msg)
@@ -1043,52 +1091,27 @@ bool BbrConnection::processTimer(cMessage *msg)
 void BbrConnection::addPacket(Packet *packet)
 {
     Enter_Method("addPacket");
-    if (packetQueue.empty()) {
-        if (intersendingTime != 0){
-            paceStart = simTime();
-            scheduleAt(simTime() + intersendingTime, paceMsg);
-        }
-        else {
-            paceStart = simTime();
-            scheduleAt(simTime() + 0.000001, paceMsg);
-        }
-    }
-
-    inet::Ptr<TcpHeader> tcpHeader = packet->removeAtFront<tcp::TcpHeader>();
-    bufferedBytes = bufferedBytes + B(packet->getDataLength()).get();
-    packet->insertAtFront(tcpHeader);
-    packetQueue.push(packet);
+//    inet::Ptr<TcpHeader> tcpHeader = packet->removeAtFront<tcp::TcpHeader>();
+//    int64_t packetSize = B(packet->getDataLength()).get();
+//    packet->insertAtFront(tcpHeader);
+//
+//    if (!paceMsg->isScheduled()){
+//        packet = addSkbInfoTags(packet);
+//        calcBytesInFlight += packetSize;
+//        tcpMain->sendFromConn(packet, "ipOut");
+//
+//        paceStart = simTime();
+//        scheduleAt(paceStart + intersendingTime, paceMsg);
+//    }
+//    else{
+//        bufferedBytes = bufferedBytes + packetSize;
+//        packetQueue.push(packet);
+//    }
 }
 
 void BbrConnection::processPaceTimer()
 {
-    Packet* packet = packetQueue.front();
-    inet::Ptr<TcpHeader> tcpHeader = packet->removeAtFront<tcp::TcpHeader>();
-    bufferedBytes = bufferedBytes - B(packet->getDataLength()).get();
-    //std::cout << "\n PACE BUFFER PACKET SIZE: " << B(packet->getDataLength()).get() << endl;
-    //std::cout << "\n PACE BUFFER SND MSS: " << state->snd_mss << endl;
-    calcBytesInFlight = calcBytesInFlight + state->snd_mss;
-    packet->insertAtFront(tcpHeader);
-    packet = addSkbInfoTags(packet);
-    tcpMain->sendFromConn(packet, "ipOut");
-
-    packetQueue.pop();
-
-    bufferedPacketsVec.record(packetQueue.size());
-
-    if (!packetQueue.empty()) {
-        if (intersendingTime != 0){
-            paceStart = simTime();
-            scheduleAt(simTime() + intersendingTime, paceMsg);
-            //std::cout << "\n INTER SENDING TIME: " << intersendingTime << endl;
-        }
-        else {
-            paceStart = simTime();
-            scheduleAt(simTime() + 0.00001, paceMsg);
-            //std::cout << "\n *WRONG* INTER SENDING TIME: " << 0.05 << endl;
-        }
-            //throw cRuntimeError("Pace is not set.");
-    }
+    sendPendingData();
 }
 
 uint32_t BbrConnection::sendSegment(uint32_t bytes)
@@ -1181,6 +1204,16 @@ uint32_t BbrConnection::sendSegment(uint32_t bytes)
 //    tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(bytes);
 
     // send it
+    //addSkbInfoTags(tcpHeader, bytes);
+
+    if(pace){
+        tcpHeader->addTagIfAbsent<SkbInfo>()->setFirstSent(m_firstSentTime);
+        tcpHeader->addTagIfAbsent<SkbInfo>()->setLastSent(simTime());
+        tcpHeader->addTagIfAbsent<SkbInfo>()->setDeliveredTime(m_deliveredTime);
+        tcpHeader->addTagIfAbsent<SkbInfo>()->setDelivered(m_delivered);
+        tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(bytes);
+    }
+
     sendToIP(tcpSegment, tcpHeader);
 
     // let application fill queue again, if there is space
@@ -1247,32 +1280,15 @@ bool BbrConnection::sendData(uint32_t congestionWindow)
     EV_INFO << "May send " << bytesToSend << " bytes (effectiveWindow " << effectiveWin << ", in buffer " << buffered << " bytes)\n";
 
     // send whole segments
-    if(state->enableMaxBurst){
-        uint32_t segmentsSent = 0;
-        while (bytesToSend >= effectiveMss && ((state->max_burst - segmentsSent) > 0)) {
-            uint32_t sentBytes = sendSegment(effectiveMss);
-            ASSERT(bytesToSend >= sentBytes);
-            bytesToSend -= sentBytes;
-            segmentsSent++;
-        }
-    }
-    else{
-        while (bytesToSend >= effectiveMss) {
-            uint32_t sentBytes = sendSegment(effectiveMss);
-            ASSERT(bytesToSend >= sentBytes);
-            bytesToSend -= sentBytes;
-        }
-    }
-    if (bytesToSend > 0) {
-        // Nagle's algorithm: when a TCP connection has outstanding data that has not
-        // yet been acknowledged, small segments cannot be sent until the outstanding
-        // data is acknowledged.
-        bool unacknowledgedData = (state->snd_una != state->snd_max);
-        bool containsFin = state->send_fin && (state->snd_nxt + bytesToSend) == state->snd_fin_seq;
-        if (state->nagle_enabled && unacknowledgedData && !containsFin)
-            EV_WARN << "Cannot send (last) segment due to Nagle, not enough data for a full segment\n";
-        else
-            sendSegment(bytesToSend);
+    //while (bytesToSend >= effectiveMss) {
+        //uint32_t sentBytes = sendSegment(effectiveMss);
+        //ASSERT(bytesToSend >= sentBytes);
+        //bytesToSend -= sentBytes;
+    //}
+
+    if(bytesToSend >= effectiveMss) {
+        uint32_t sentBytes = sendSegment(effectiveMss);
+        bytesToSend -= sentBytes;
     }
 
     if (old_snd_nxt == state->snd_nxt)
@@ -1294,6 +1310,90 @@ bool BbrConnection::sendData(uint32_t congestionWindow)
     return true;
 }
 
+void BbrConnection::sendPendingData()
+{
+    if(pace){
+        bool dataSent = false;
+        if (!paceMsg->isScheduled()){
+            if(!retransmitOnePacket){
+                if(state->lossRecovery){
+                    dataSent = sendDataDuringLossRecovery(dynamic_cast<BbrFlavour*>(tcpAlgorithm)->getCwnd());
+                }
+                else{
+                    dataSent = sendData(dynamic_cast<BbrFlavour*>(tcpAlgorithm)->getCwnd());
+                }
+            }
+            else{
+                retransmitOneSegment(retransmitAfterTimeout);
+                retransmitOnePacket = false;
+                retransmitAfterTimeout = false;
+                dataSent = true;
+            }
+
+            if(dataSent){
+                paceStart = simTime();
+                scheduleAfter(intersendingTime, paceMsg);
+            }
+        }
+    }
+    else{
+        if(!retransmitOnePacket){
+            if(state->lossRecovery){
+                sendDataDuringLossRecoveryPhase(dynamic_cast<BbrFlavour*>(tcpAlgorithm)->getCwnd());
+                std::cout << "\n BEING CALLED, PROBS SHOULDNT? " << "\n";
+            }
+            else{
+                sendData(dynamic_cast<BbrFlavour*>(tcpAlgorithm)->getCwnd());
+            }
+        }
+        else{
+            retransmitOneSegment(retransmitAfterTimeout);
+            retransmitOnePacket = false;
+            retransmitAfterTimeout = false;
+        }
+    }
+}
+
+bool BbrConnection::sendDataDuringLossRecovery(uint32_t congestionWindow)
+{
+    ASSERT(state->sack_enabled && state->lossRecovery);
+
+    // RFC 3517 pages 7 and 8: "(5) In order to take advantage of potential additional available
+    // cwnd, proceed to step (C) below.
+    // (...)
+    // (C) If cwnd - pipe >= 1 SMSS the sender SHOULD transmit one or more
+    // segments as follows:
+    // (...)
+    // (C.5) If cwnd - pipe >= 1 SMSS, return to (C.1)"
+    if (((int)congestionWindow - (int)m_bytesInFlight) >= (int)state->snd_mss) { // Note: Typecast needed to avoid prohibited transmissions
+        // RFC 3517 pages 7 and 8: "(C.1) The scoreboard MUST be queried via NextSeg () for the
+        // sequence number range of the next segment to transmit (if any),
+        // and the given segment sent.  If NextSeg () returns failure (no
+        // data to send) return without sending anything (i.e., terminate
+        // steps C.1 -- C.5)."
+
+        uint32_t seqNum;
+
+        if (!nextSeg(seqNum)) // if nextSeg() returns false (=failure): terminate steps C.1 -- C.5
+            return false;
+
+        uint32_t sentBytes = sendSegmentDuringLossRecoveryPhase(seqNum);
+        if(sentBytes > 0){
+            return true;
+        }
+        else{
+            return false;
+        }
+        //state->pipe += sentBytes;
+        //m_bytesInFlight += sentBytes;
+        // RFC 3517 page 8: "(C.4) The estimate of the amount of data outstanding in the
+        // network must be updated by incrementing pipe by the number of
+        // octets transmitted in (C.1)."
+    }
+    else{
+        return false;
+    }
+}
 
 void BbrConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader> &tcpHeader)
 {
@@ -1315,7 +1415,7 @@ void BbrConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader> &tcpHeader
 
     // TBD reuse next function for sending
 
-    IL3AddressType *addressType = remoteAddr.getAddressType();
+    const IL3AddressType *addressType = remoteAddr.getAddressType();
     tcpSegment->addTagIfAbsent<DispatchProtocolReq>()->setProtocol(addressType->getNetworkProtocol());
 
     if (ttl != -1 && tcpSegment->findTag<HopLimitReq>() == nullptr)
@@ -1349,39 +1449,36 @@ void BbrConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader> &tcpHeader
     // (ECT(0) or ECT(1)) in the IP header for retransmitted data packets
     tcpSegment->addTagIfAbsent<EcnReq>()->setExplicitCongestionNotification((state->ect && !state->sndAck && !state->rexmit) ? IP_ECN_ECT_1 : IP_ECN_NOT_ECT);
 
-    tcpSegment->addTagIfAbsent<EcnReq>()->setExplicitCongestionNotification((state->ect && !state->sndAck && !state->rexmit) ? IP_ECN_ECT_1 : IP_ECN_NOT_ECT);
-
     tcpHeader->setCrc(0);
     tcpHeader->setCrcMode(tcpMain->crcMode);
 
     insertTransportProtocolHeader(tcpSegment, Protocol::tcp, tcpHeader);
 
-    if(pace){
-        addPacket(tcpSegment);
-        bufferedPacketsVec.record(packetQueue.size());
-    }
-    else{
-//        tcpSegment = addSkbInfoTags(tcpSegment);
-        tcpMain->sendFromConn(tcpSegment, "ipOut");
-    }
+    tcpMain->sendFromConn(tcpSegment, "ipOut");
 }
 
 void BbrConnection::changeIntersendingTime(simtime_t _intersendingTime)
 {
-    ASSERT(_intersendingTime > 0);
-    intersendingTime = _intersendingTime;
-    EV_TRACE << "New pace: " << intersendingTime << "s" << std::endl;
-    //std::cout << "New pace: " << intersendingTime << "s" << std::endl;
-    paceValueVec.record(intersendingTime);
-    if (paceMsg->isScheduled()) {
-        simtime_t newArrivalTime = paceStart + intersendingTime;
-        if (newArrivalTime < simTime()) {
-            paceStart = simTime();
-            rescheduleAt(simTime(), paceMsg);
-        }
-        else {
-            paceStart = simTime();
-            rescheduleAt(newArrivalTime, paceMsg);
+    if(pace){
+        ASSERT(_intersendingTime > 0);
+        if(_intersendingTime != intersendingTime){
+            simtime_t prevIntersendingTime = intersendingTime;
+            intersendingTime = _intersendingTime;
+            EV_TRACE << "New pace: " << intersendingTime << "s\n";
+            paceValueVec.record(intersendingTime);
+//            simtime_t newScheduledTime = paceStart + intersendingTime;
+//            if(newScheduledTime >= simTime()){
+//                rescheduleAt(newScheduledTime, paceMsg);
+//            }
+//            else{
+////                std::cout << "\n CURRENT SIMTIME: " << simTime() << endl;
+////                std::cout << "\n PREV PACING START TIME: " << paceStart << endl;
+////                std::cout << "\n PREV INTER SENDING TIME: " << prevIntersendingTime << endl;
+////                std::cout << "\n NEW INTER SENDING TIME: " << intersendingTime << endl;
+////                std::cout << "\n OLD SCHEDULED TIME: " << paceStart + prevIntersendingTime << endl;
+////                std::cout << "\n NEW SCHEDULED TIME: " << paceStart + intersendingTime << endl;
+//                rescheduleAt(simTime(), paceMsg);
+//            }
         }
     }
 }
@@ -1427,7 +1524,7 @@ void BbrConnection::updateSample(uint32_t delivered, uint32_t lost, bool is_sack
      * measuring the delivery rate during loss recovery is crucial
      * for connections suffer heavy or prolonged losses.
      */
-    if(m_rateSample.m_interval < minRtt.dbl()) {
+    if(m_rateSample.m_interval < minRtt) {
         m_rateSample.m_interval = 0;
         m_rateSample.m_priorTime = 0; // To make rate sample invalid
         return;
@@ -1440,6 +1537,66 @@ void BbrConnection::updateSample(uint32_t delivered, uint32_t lost, bool is_sack
         m_rateAppLimited = m_rateSample.m_isAppLimited;
         m_rateSample.m_deliveryRate = m_rateSample.m_delivered / m_rateSample.m_interval;
     }
+}
+
+void BbrConnection::retransmitOneSegment(bool called_at_rto)
+{
+    // rfc-3168, page 20:
+    // ECN-capable TCP implementations MUST NOT set either ECT codepoint
+    // (ECT(0) or ECT(1)) in the IP header for retransmitted data packets
+
+    if (state && state->ect)
+        state->rexmit = true;
+
+    uint32_t old_snd_nxt = state->snd_nxt;
+
+    // retransmit one segment at snd_una, and set snd_nxt accordingly (if not called at RTO)
+    state->snd_nxt = state->snd_una;
+
+    // When FIN sent the snd_max - snd_nxt larger than bytes available in queue
+    uint32_t bytes = std::min(std::min(state->snd_mss, state->snd_max - state->snd_nxt),
+                sendQueue->getBytesAvailable(state->snd_nxt));
+
+    // FIN (without user data) needs to be resent
+    if (bytes == 0 && state->send_fin && state->snd_fin_seq == sendQueue->getBufferEndSeq()) {
+        state->snd_max = sendQueue->getBufferEndSeq();
+        EV_DETAIL << "No outstanding DATA, resending FIN, advancing snd_nxt over the FIN\n";
+        state->snd_nxt = state->snd_max;
+        sendFin();
+        tcpAlgorithm->segmentRetransmitted(state->snd_nxt, state->snd_nxt + 1);
+        state->snd_max = ++state->snd_nxt;
+
+        emit(unackedSignal, state->snd_max - state->snd_una);
+    }
+    else {
+        ASSERT(bytes != 0);
+        sendSegment(bytes);
+        tcpAlgorithm->segmentRetransmitted(state->snd_una, state->snd_nxt);
+
+        if (!called_at_rto) {
+            if (seqGreater(old_snd_nxt, state->snd_nxt))
+                state->snd_nxt = old_snd_nxt;
+        }
+
+        // notify
+        tcpAlgorithm->ackSent();
+
+        if (state->sack_enabled) {
+            // RFC 3517, page 7: "(3) Retransmit the first data segment presumed dropped -- the segment
+            // starting with sequence number HighACK + 1.  To prevent repeated
+            // retransmission of the same data, set HighRxt to the highest
+            // sequence number in the retransmitted segment."
+            state->highRxt = rexmitQueue->getHighestRexmittedSeqNum();
+        }
+    }
+
+    if (state && state->ect)
+        state->rexmit = false;
+}
+
+void BbrConnection::retransmitNext(bool timeout) {
+    retransmitOnePacket = true;
+    retransmitAfterTimeout = timeout;
 }
 
 void BbrConnection::updateInFlight() {
@@ -1461,6 +1618,7 @@ void BbrConnection::updateInFlight() {
     for (uint32_t s1 = state->snd_una; seqLess(s1, state->snd_max); s1 +=
             length) {
         rexmitQueue->checkSackBlock(s1, length, sacked, rexmitted);
+        //length = state->snd_mss;
         if(length == 0){
             break;
         }
@@ -1485,20 +1643,24 @@ void BbrConnection::updateInFlight() {
             }
         }
     }
-    uint32_t paceBufferedQueueSize = packetQueue.size() * (state->snd_mss-12);
-    if(currentInFlight < bufferedBytes){
-        m_bytesInFlight = state->snd_mss;//-12;
-    }
-    else{
-        m_bytesInFlight = currentInFlight - bufferedBytes;
-    }
-
-    if(m_bytesInFlight < 0){
-        m_bytesInFlight = state->snd_mss;//-12;
-    }
-
-    //m_bytesInFlight = calcBytesInFlight;
+//    uint32_t paceBufferedQueueSize = packetQueue.size() * (state->snd_mss);
+//    //if(currentInFlight < bufferedBytes){
+//    //    m_bytesInFlight = state->snd_mss;//-12;
+//    //}
+//    //else{
+//    if(currentInFlight < bufferedBytes){
+//        m_bytesInFlight = 0;
+//    }
+//    else{
+//        m_bytesInFlight = currentInFlight - bufferedBytes;
+//    }
+    //}
+    m_bytesInFlight = currentInFlight;
+    state->pipe = m_bytesInFlight;
     m_bytesLoss = bytesLoss;
+
+    emit(mbytesInFlightSignal, m_bytesInFlight);
+    emit(mbytesLossSignal, m_bytesLoss);
 }
 
 void BbrConnection::setPipe() {
@@ -1538,7 +1700,6 @@ void BbrConnection::setPipe() {
     for (uint32_t s1 = state->snd_una; seqLess(s1, state->snd_max); s1 +=
             length) {
         rexmitQueue->checkSackBlock(s1, length, sacked, rexmitted);
-
         if (!sacked) {
             // RFC 3517, page 3: "(a) If IsLost (S1) returns false:
             //
@@ -1593,30 +1754,20 @@ simtime_t BbrConnection::getPacingRate() {
     return intersendingTime;
 }
 
-Packet* BbrConnection::addSkbInfoTags(Packet* packet) {
-    inet::Ptr<TcpHeader> tcpHeader = packet->removeAtFront<tcp::TcpHeader>();
-
-    if(packet->getDataLength() > b(0)) { //Data Packet
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setFirstSent(getFirstSent());
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setLastSent(simTime());
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setDeliveredTime(getDeliveredTime());
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setDelivered(getDelivered());
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(state->snd_mss);// - B(tcpHeader->getHeaderOptionArrayLength()).get());
-    }
-    //std::cout << "\n PROTOCOL: " << packet->getTag<PacketProtocolTag>()->getProtocol()->str() << endl;
-    for(uint i = 0; i < tcpHeader->getHeaderOptionArraySize(); i++){
-        TcpOption* option = tcpHeader->getHeaderOptionForUpdate(i);
-        if(option->getKind() == TCPOPTION_TIMESTAMP){
-            check_and_cast<TcpOptionTimestamp *>(option)->setSenderTimestamp(convertSimtimeToTS(simTime()));
-        }
-    }
-
-    packet->insertAtFront(tcpHeader);
-
-
-    //std::cout << "\n TIME WHEN PACKET SENT: " << simTime() << endl;
-    return packet;
+uint32_t BbrConnection::getLastAckedSackedBytes() {
+    return m_lastAckedSackedBytes;
 }
 
+void BbrConnection::addSkbInfoTags(const Ptr<TcpHeader> &tcpHeader, uint32_t payloadBytes) {
+    tcpHeader->addTagIfAbsent<SkbInfo>()->setFirstSent(m_firstSentTime);
+    tcpHeader->addTagIfAbsent<SkbInfo>()->setLastSent(simTime());
+    tcpHeader->addTagIfAbsent<SkbInfo>()->setDeliveredTime(m_deliveredTime);
+    tcpHeader->addTagIfAbsent<SkbInfo>()->setDelivered(m_delivered);
+    tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(payloadBytes);
+}
+
+void BbrConnection::cancelPaceTimer() {
+    cancelEvent(paceMsg);
+}
 }
 }

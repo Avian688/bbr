@@ -26,4 +26,5 @@ class SkbInfo extends TagBase
     simtime_t lastSent;
     simtime_t deliveredTime;
     uint32_t payloadBytes;
+    bool isAppLimited;
 }

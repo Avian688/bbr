@@ -16,23 +16,21 @@
 #ifndef TRANSPORTLAYER_BBR_BBR_H_
 #define TRANSPORTLAYER_BBR_BBR_H_
 
-#include <inet/transportlayer/tcp/Tcp.h>
 #include <inet/transportlayer/tcp/TcpConnection.h>
 
+#include "../../../../tcpPaced/src/transportlayer/tcp/TcpPaced.h"
 #include "BbrConnection.h"
 
 namespace inet {
 namespace tcp {
 
-class Bbr : public Tcp {
+class Bbr : public TcpPaced {
 public:
     Bbr();
     virtual ~Bbr();
 protected:
     /** Factory method; may be overriden for customizing Tcp */
     virtual TcpConnection* createConnection(int socketId) override;
-public:
-    virtual TcpSendQueue *createSendQueue() override;
 };
 
 } // namespace tcp

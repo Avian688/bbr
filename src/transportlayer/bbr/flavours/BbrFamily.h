@@ -34,14 +34,18 @@ class BbrFamily : public TcpTahoeRenoFamily
     /** Ctor */
     BbrFamily();
 
-    virtual void receivedDataAck(uint32_t firstSeqAcked, const Ptr<const SkbInfo> skbInfo);
+    virtual void receivedDataAck(uint32_t firstSeqAcked);
 
     virtual void receiveSeqChanged(const Ptr<const SkbInfo> skbInfo);
+
+    virtual void receivedOutOfOrderSegment(const Ptr<const SkbInfo> skbInfo);
 
     /** Redefine what should happen when dupAck was received, to add congestion window management */
     virtual void receivedDuplicateAck() override;
 
     virtual simtime_t getConnMinRtt() { return state->connMinRtt;};
+
+    virtual bool sendData(bool sendCommandInvoked);
 
 };
 

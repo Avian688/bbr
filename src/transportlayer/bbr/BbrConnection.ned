@@ -37,6 +37,13 @@ simple BbrConnection extends TcpConnection
         @signal[msendElapsed];
         @signal[mackElapsed];
         @signal[targetCwnd];
+        @signal[priorCwnd];
+        @signal[estimatedBdp];
+        @signal[roundCount];
+        @signal[recover];
+        @signal[lossRecovery];
+        @signal[highRxt];
+        @signal[txBufferLength];
         
         @statistic[additiveIncrease](record=vector; interpolationmode=sample-hold);
         @statistic[minRtt](record=vector; interpolationmode=sample-hold);
@@ -44,6 +51,12 @@ simple BbrConnection extends TcpConnection
         @statistic[state](record=vector; interpolationmode=sample-hold);
         @statistic[pacingGain](record=vector; interpolationmode=sample-hold);
         @statistic[targetCwnd](record=vector; interpolationmode=sample-hold);
+        @statistic[priorCwnd](record=vector; interpolationmode=sample-hold);
+        @statistic[roundCount](record=vector; interpolationmode=sample-hold);
+        @statistic[recover](record=vector; interpolationmode=sample-hold);
+        @statistic[lossRecovery](record=vector; interpolationmode=sample-hold);
+        @statistic[highRxt](record=vector; interpolationmode=sample-hold);
+        @statistic[txBufferLength](record=vector; interpolationmode=sample-hold);
         
         @statistic[mDelivered](record=vector; interpolationmode=sample-hold);
 		@statistic[mFirstSentTime](record=vector; interpolationmode=sample-hold);
@@ -53,4 +66,5 @@ simple BbrConnection extends TcpConnection
 		@statistic[mbytesInFlight](record=vector; interpolationmode=sample-hold);
 		@statistic[mbytesInFlightTotal](record=vector; interpolationmode=sample-hold);
 		@statistic[mbytesLoss](record=vector; interpolationmode=sample-hold);
+		@statistic[estimatedBdp](record=vector; interpolationmode=sample-hold);
 }
