@@ -15,9 +15,9 @@
 
 package bbr.transportlayer.bbr;
 
-import inet.transportlayer.tcp.TcpConnection;
+import tcppaced.transportlayer.tcp.TcpPacedConnection;
 
-simple BbrConnection extends TcpConnection
+simple BbrConnection extends TcpPacedConnection
 {
     parameters:
         @class("inet::tcp::BbrConnection"); 

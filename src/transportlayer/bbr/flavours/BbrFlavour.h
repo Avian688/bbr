@@ -174,7 +174,6 @@ class BbrFlavour : public BbrFamily
     virtual double getFirstSentTime() { return state->firstSentTime;};
     virtual double getDeliveredTime() { return state->deliveredTime;};
 
-    virtual uint32_t getCwnd() { return state->snd_cwnd;};
     };
 
 } // namespace tcp

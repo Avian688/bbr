@@ -18,14 +18,13 @@
 
 #include "BbrFamilyState_m.h"
 #include "../BbrConnection.h"
-#include "inet/transportlayer/tcp/flavours/TcpTahoeRenoFamily.h"
-
+#include "../../../../../tcpPaced/src/transportlayer/tcp/flavours/TcpPacedFamily.h"
 namespace inet {
 namespace tcp {
 /**
  * Provides utility functions to implement Hpcc.
  */
-class BbrFamily : public TcpTahoeRenoFamily
+class BbrFamily : public TcpPacedFamily
 {
   protected:
     BbrFamilyStateVariables *& state; // alias to TcpAlgorithm's 'state'
@@ -34,7 +33,7 @@ class BbrFamily : public TcpTahoeRenoFamily
     /** Ctor */
     BbrFamily();
 
-    virtual void receivedDataAck(uint32_t firstSeqAcked);
+    virtual void receivedDataAck(uint32_t firstSeqAcked) override;
 
     virtual void receiveSeqChanged(const Ptr<const SkbInfo> skbInfo);
 
@@ -44,8 +43,6 @@ class BbrFamily : public TcpTahoeRenoFamily
     virtual void receivedDuplicateAck() override;
 
     virtual simtime_t getConnMinRtt() { return state->connMinRtt;};
-
-    virtual bool sendData(bool sendCommandInvoked);
 
 };
 

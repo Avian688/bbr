@@ -29,8 +29,6 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 
 # Object files for local .cc, .msg and .sm files
 OBJS = \
-    $O/applications/tcpapp/BbrSessionApp.o \
-    $O/applications/tcpapp/TcpThroughputSinkAppThread.o \
     $O/transportlayer/bbr/Bbr.o \
     $O/transportlayer/bbr/BbrConnection.o \
     $O/transportlayer/bbr/flavours/BbrFamily.o \

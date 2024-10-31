@@ -17,7 +17,6 @@
 #define TRANSPORTLAYER_BBR_BBR_H_
 
 #include <inet/transportlayer/tcp/TcpConnection.h>
-
 #include "../../../../tcpPaced/src/transportlayer/tcp/TcpPaced.h"
 #include "BbrConnection.h"
 
