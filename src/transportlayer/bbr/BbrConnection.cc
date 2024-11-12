@@ -838,6 +838,8 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 
         sendQueue->discardUpTo(discardUpToSeq);
 
+        enqueueData();
+
         // acked data no longer needed in rexmit queue
         if (state->sack_enabled){
             rexmitQueue->discardUpTo(discardUpToSeq);
@@ -1126,7 +1128,7 @@ bool BbrConnection::sendDataDuringLossRecovery(uint32_t congestionWindow)
 
         uint32_t seqNum;
 
-        if (!nextSeg(seqNum)) // if nextSeg() returns false (=failure): terminate steps C.1 -- C.5
+        if (!nextSeg(seqNum, true)) // if nextSeg() returns false (=failure): terminate steps C.1 -- C.5
             return false;
 
         uint32_t sentBytes = sendSegmentDuringLossRecoveryPhase(seqNum);
@@ -1211,7 +1213,7 @@ void BbrConnection::updateInFlight() {
     uint32_t length = 0; // required for rexmitQueue->checkSackBlock()
     bool sacked; // required for rexmitQueue->checkSackBlock()
     bool rexmitted; // required for rexmitQueue->checkSackBlock()
-
+    //auto currIter = rexmitQueue->searchSackBlock(state->snd_una);
 
 //    uint32_t startVal = state->snd_una;
 //    if(packetQueue.size() > 0){
@@ -1224,6 +1226,7 @@ void BbrConnection::updateInFlight() {
 
     for (uint32_t s1 = state->snd_una; seqLess(s1, state->snd_max); s1 +=
             length) {
+        //rexmitQueue->checkSackBlockIter(s1, length, sacked, rexmitted, currIter);
         rexmitQueue->checkSackBlock(s1, length, sacked, rexmitted);
         if(length == 0){
             break;
@@ -1310,7 +1313,7 @@ void BbrConnection::addSkbInfoTags(const Ptr<TcpHeader> &tcpHeader, uint32_t pay
 }
 
 void BbrConnection::setPipe() {
-    updateInFlight();
+    //updateInFlight();
 }
 
 bool BbrConnection::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionSack& option)
