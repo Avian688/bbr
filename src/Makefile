@@ -31,6 +31,7 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 OBJS = \
     $O/transportlayer/bbr/Bbr.o \
     $O/transportlayer/bbr/BbrConnection.o \
+    $O/transportlayer/bbr/BbrSendQueue.o \
     $O/transportlayer/bbr/flavours/BbrFamily.o \
     $O/transportlayer/bbr/flavours/BbrFlavour.o \
     $O/transportlayer/bbr/SkbInfo_m.o \
@@ -126,7 +127,9 @@ endif
 
 .PHONY: all clean cleanall depend msgheaders smheaders
 
-.SUFFIXES: .cc
+# disabling all implicit rules
+.SUFFIXES :
+.PRECIOUS : %_m.h %_m.cc
 
 $O/%.o: %.cc $(COPTS_FILE) | msgheaders smheaders
 	@$(MKPATH) $(dir $@)

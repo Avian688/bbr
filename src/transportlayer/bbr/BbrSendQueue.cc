@@ -13,40 +13,23 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
-#include "BbrFamily.h"
+#include "BbrSendQueue.h"
 
 namespace inet {
+
 namespace tcp {
 
-std::string BbrFamilyStateVariables::str() const
-{
-    std::stringstream out;
-    out << TcpTahoeRenoFamilyStateVariables::str();
-    return out.str();
-}
+Register_Class(BbrSendQueue);
 
-std::string BbrFamilyStateVariables::detailedInfo() const
-{
-    std::stringstream out;
-    out << TcpTahoeRenoFamilyStateVariables::detailedInfo();
-    return out.str();
-}
-
-// ---
-
-BbrFamily::BbrFamily() : TcpPacedFamily(),
-    state((BbrFamilyStateVariables *&)TcpPacedFamily::state)
+BbrSendQueue::BbrSendQueue()
 {
 }
 
-void BbrFamily::receivedDataAck(uint32_t firstSeqAcked)
+BbrSendQueue::~BbrSendQueue()
 {
-    TcpPacedFamily::receivedDataAck(firstSeqAcked);
 }
 
-void BbrFamily::receivedDuplicateAck() {
-    TcpPacedFamily::receivedDuplicateAck();
+
 }
 
-} // namespace tcp
-} // namespace inet
+}

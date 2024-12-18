@@ -74,13 +74,8 @@ protected:
 
     virtual bool processSACKOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionSack& option) override;
 
-    /** Utility: adds SACKs to segments header options field */
-    virtual TcpHeader addSacks(const Ptr<TcpHeader>& tcpHeader) override;
-
 public:
     virtual uint32_t sendSegment(uint32_t bytes) override;
-
-    virtual void sendSkbInfoAck(const Ptr<const SkbInfo> skbInfo);
 
     virtual simtime_t getFirstSent();
 
@@ -96,7 +91,7 @@ public:
 
     virtual void addSkbInfoTags(const Ptr<TcpHeader> &tcpHeader, uint32_t payloadBytes);
 
-    virtual void skbDelivered(const Ptr<const SkbInfo> skbInfo);
+    virtual void skbDelivered(uint32_t seqNum);
 
     virtual bool sendDataDuringLossRecovery(uint32_t congestionWindow) override;
 

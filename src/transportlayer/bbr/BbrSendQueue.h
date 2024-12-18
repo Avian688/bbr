@@ -13,40 +13,27 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
-#include "BbrFamily.h"
+#ifndef TRANSPORTLAYER_BBR_BBRSENDQUEUE_H_
+#define TRANSPORTLAYER_BBR_BBRSENDQUEUE_H_
+
+#include <inet/transportlayer/tcp/TcpSendQueue.h>
 
 namespace inet {
 namespace tcp {
 
-std::string BbrFamilyStateVariables::str() const
+class BbrSendQueue : public TcpSendQueue
 {
-    std::stringstream out;
-    out << TcpTahoeRenoFamilyStateVariables::str();
-    return out.str();
+  public:
+    BbrSendQueue();
+
+    /**
+     * Virtual dtor.
+     */
+    virtual ~BbrSendQueue();
+
+};
+
+}
 }
 
-std::string BbrFamilyStateVariables::detailedInfo() const
-{
-    std::stringstream out;
-    out << TcpTahoeRenoFamilyStateVariables::detailedInfo();
-    return out.str();
-}
-
-// ---
-
-BbrFamily::BbrFamily() : TcpPacedFamily(),
-    state((BbrFamilyStateVariables *&)TcpPacedFamily::state)
-{
-}
-
-void BbrFamily::receivedDataAck(uint32_t firstSeqAcked)
-{
-    TcpPacedFamily::receivedDataAck(firstSeqAcked);
-}
-
-void BbrFamily::receivedDuplicateAck() {
-    TcpPacedFamily::receivedDuplicateAck();
-}
-
-} // namespace tcp
-} // namespace inet
+#endif /* TRANSPORTLAYER_BBR_BBRSENDQUEUE_H_ */

@@ -24,6 +24,7 @@ simple BbrConnection extends TcpPacedConnection
         
         @signal[additiveIncrease];
         @signal[minRtt];
+        @signal[connMinRtt];
         @signal[maxBandwidthFilter];
         @signal[state];
         @signal[pacingGain];
@@ -44,9 +45,11 @@ simple BbrConnection extends TcpPacedConnection
         @signal[lossRecovery];
         @signal[highRxt];
         @signal[txBufferLength];
+        @signal[recoveryPoint];
         
         @statistic[additiveIncrease](record=vector; interpolationmode=sample-hold);
         @statistic[minRtt](record=vector; interpolationmode=sample-hold);
+        @statistic[connMinRtt](record=vector; interpolationmode=sample-hold);
         @statistic[maxBandwidthFilter](record=vector; interpolationmode=sample-hold);
         @statistic[state](record=vector; interpolationmode=sample-hold);
         @statistic[pacingGain](record=vector; interpolationmode=sample-hold);
@@ -57,6 +60,7 @@ simple BbrConnection extends TcpPacedConnection
         @statistic[lossRecovery](record=vector; interpolationmode=sample-hold);
         @statistic[highRxt](record=vector; interpolationmode=sample-hold);
         @statistic[txBufferLength](record=vector; interpolationmode=sample-hold);
+        @statistic[recoveryPoint](record=vector; interpolationmode=sample-hold);
         
         @statistic[mDelivered](record=vector; interpolationmode=sample-hold);
 		@statistic[mFirstSentTime](record=vector; interpolationmode=sample-hold);

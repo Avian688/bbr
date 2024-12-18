@@ -20,7 +20,9 @@
 #include <inet/transportlayer/tcp/TcpAlgorithm.h>
 #include <inet/transportlayer/tcp/TcpReceiveQueue.h>
 #include <inet/transportlayer/tcp/TcpSackRexmitQueue.h>
+
 #include "../bbr/flavours/BbrFlavour.h"
+
 namespace inet {
 namespace tcp {
 
@@ -521,7 +523,7 @@ TcpEventCode BbrConnection::processSegment1stThru8th(Packet *tcpSegment, const P
                         }
                     }
 
-                    dynamic_cast<BbrFamily*>(tcpAlgorithm)->receivedOutOfOrderSegment(tcpHeader->getTag<SkbInfo>());
+                    tcpAlgorithm->receivedOutOfOrderSegment();
                 }
                 else {
                     // forward data to app
@@ -678,9 +680,7 @@ TcpEventCode BbrConnection::processSegment1stThru8th(Packet *tcpSegment, const P
         }
 
         // tcpAlgorithm decides when and how to do ACKs
-
-        dynamic_cast<BbrFamily*>(tcpAlgorithm)->receiveSeqChanged(tcpHeader->getTag<SkbInfo>());
-        //}
+        tcpAlgorithm->receiveSeqChanged();
     }
 
     if ((fsm.getState() == TCP_S_ESTABLISHED || fsm.getState() == TCP_S_SYN_RCVD) &&
@@ -770,12 +770,14 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 
             // we need to update send window even if the ACK is a dupACK, because rcv win
             // could have been changed if faulty data receiver is not respecting the "do not shrink window" rule
-//
-//            if((tcpHeader->findTag<SkbInfo>())){
-//                skbDelivered(tcpHeader->getTag<SkbInfo>());
-//            }
 
             updateWndInfo(tcpHeader);
+
+
+            if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
+                skbDelivered(tcpHeader->getAckNo());
+            }
+
             uint32_t currentDelivered  = m_delivered - previousDelivered;
             m_lastAckedSackedBytes = currentDelivered;
 
@@ -791,12 +793,13 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         else {
             // if doesn't qualify as duplicate ACK, just ignore it.
             if (payloadLength == 0) {
-                if (state->snd_una != tcpHeader->getAckNo())
+                if (state->snd_una != tcpHeader->getAckNo()){
                     EV_DETAIL << "Old ACK: ackNo < snd_una\n";
-                else if (state->snd_una == state->snd_max)
+                }
+                else if (state->snd_una == state->snd_max) {
                     EV_DETAIL << "ACK looks duplicate but we have currently no unacked data (snd_una == snd_max)\n";
+                }
             }
-
             // reset counter
             state->dupacks = 0;
 
@@ -836,8 +839,13 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 
         // acked data no longer needed in send queue
 
-        sendQueue->discardUpTo(discardUpToSeq);
+        // acked data no longer needed in rexmit queue
+        if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
+            skbDelivered(tcpHeader->getAckNo());
+        }
 
+        // acked data no longer needed in send queue
+        sendQueue->discardUpTo(discardUpToSeq);
         enqueueData();
 
         // acked data no longer needed in rexmit queue
@@ -845,21 +853,20 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             rexmitQueue->discardUpTo(discardUpToSeq);
         }
 
-        if((tcpHeader->findTag<SkbInfo>())){
-            skbDelivered(tcpHeader->getTag<SkbInfo>());
-        }
         updateWndInfo(tcpHeader);
-        uint32_t currentDelivered  = m_delivered - previousDelivered;
-        m_lastAckedSackedBytes = currentDelivered;
+
         // if segment contains data, wait until data has been forwarded to app before sending ACK,
         // otherwise we would use an old ACKNo
-        updateInFlight();
-
         if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
-            // notify
+
+            uint32_t currentDelivered  = m_delivered - previousDelivered;
+            m_lastAckedSackedBytes = currentDelivered;
+
+            updateInFlight();
 
             uint32_t currentLost = m_bytesLoss;
             uint32_t lost = (currentLost > previousLost) ? currentLost - previousLost : previousLost - currentLost;
+            // notify
 
             updateSample(currentDelivered, lost, false, priorInFlight, dynamic_cast<BbrFamily*>(tcpAlgorithm)->getConnMinRtt());
 
@@ -886,86 +893,33 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
     return true;
 }
 
-void BbrConnection::skbDelivered(const Ptr<const SkbInfo> skbInfo)
+void BbrConnection::skbDelivered(uint32_t seqNum)
 {
-    if(skbInfo->getDeliveredTime() != SIMTIME_MAX){
+    if(rexmitQueue->findRegion(seqNum)){
+        TcpSackRexmitQueue::Region& skbRegion = rexmitQueue->getRegion(seqNum);
+        if(skbRegion.m_deliveredTime != SIMTIME_MAX){
+            m_delivered += skbRegion.endSeqNum - skbRegion.beginSeqNum;
+            m_deliveredTime = simTime();
 
-        m_delivered += skbInfo->getPayloadBytes();
-        m_deliveredTime = simTime();
+            if (m_rateSample.m_priorDelivered == 0 || skbRegion.m_delivered > m_rateSample.m_priorDelivered)
+            {
+                m_rateSample.m_ackElapsed = simTime() - skbRegion.m_deliveredTime;
+                m_rateSample.m_priorDelivered = skbRegion.m_delivered;
+                m_rateSample.m_priorTime = skbRegion.m_deliveredTime;
+                m_rateSample.m_sendElapsed = skbRegion.m_lastSentTime - skbRegion.m_firstSentTime;
+                m_rateSample.m_isAppLimited = skbRegion.m_isAppLimited;
+                m_firstSentTime = skbRegion.m_lastSentTime;
 
-        if (m_rateSample.m_priorDelivered == 0 || skbInfo->getDelivered() > m_rateSample.m_priorDelivered)
-        {
-            m_rateSample.m_ackElapsed = simTime() - skbInfo->getDeliveredTime();
-            m_rateSample.m_priorDelivered = skbInfo->getDelivered();
-            m_rateSample.m_priorTime = skbInfo->getDeliveredTime();
-            m_rateSample.m_sendElapsed = skbInfo->getLastSent() - skbInfo->getFirstSent();
-            m_rateSample.m_isAppLimited = skbInfo->isAppLimited();
-            m_firstSentTime = skbInfo->getLastSent();
+                emit(msendElapsedSignal, m_rateSample.m_sendElapsed);
+                emit(mackElapsedSignal, m_rateSample.m_ackElapsed);
+                emit(mFirstSentTimeSignal, skbRegion.m_firstSentTime);
+                emit(mLastSentTimeSignal, skbRegion.m_lastSentTime);
+            }
 
-            emit(msendElapsedSignal, m_rateSample.m_sendElapsed);
-            emit(mackElapsedSignal, m_rateSample.m_ackElapsed);
-            emit(mFirstSentTimeSignal, skbInfo->getFirstSent());
-            emit(mLastSentTimeSignal, skbInfo->getLastSent());
-        }
-
-        m_txItemDelivered = skbInfo->getDelivered();
-    }
-}
-
-
-void BbrConnection::sendSkbInfoAck(const Ptr<const SkbInfo> skbInfo)
-{
-    const auto& tcpHeader = makeShared<TcpHeader>();
-
-    tcpHeader->setAckBit(true);
-    tcpHeader->setSequenceNo(state->snd_nxt);
-    tcpHeader->setAckNo(state->rcv_nxt);
-    tcpHeader->setWindow(updateRcvWnd());
-    //std::cout << "\n Trying to send ACK, final ACK vector size " << intDataDup.size() << endl;
-
-    // rfc-3168, pages 19-20:
-    // When TCP receives a CE data packet at the destination end-system, the
-    // TCP data receiver sets the ECN-Echo flag in the TCP header of the
-    // subsequent ACK packet.
-    // ...
-    // After a TCP receiver sends an ACK packet with the ECN-Echo bit set,
-    // that TCP receiver continues to set the ECN-Echo flag in all the ACK
-    // packets it sends (whether they acknowledge CE data packets or non-CE
-    // data packets) until it receives a CWR packet (a packet with the CWR
-    // flag set).  After the receipt of the CWR packet, acknowledgments for
-    // subsequent non-CE data packets do not have the ECN-Echo flag set.
-
-    TcpStateVariables *state = getState();
-    if (state && state->ect) {
-        if (tcpAlgorithm->shouldMarkAck()) {
-            tcpHeader->setEceBit(true);
-            EV_INFO << "In ecnEcho state... send ACK with ECE bit set\n";
+            skbRegion.m_deliveredTime = SIMTIME_MAX;
+            m_txItemDelivered = skbRegion.m_delivered;
         }
     }
-
-    // write header options
-    //std::cout << "\nSending Ack (after options)..." << tcpHeader->str() << endl;
-    writeHeaderOptions(tcpHeader);
-
-    tcpHeader->addTagIfAbsent<SkbInfo>()->setDelivered(skbInfo->getDelivered());
-    tcpHeader->addTagIfAbsent<SkbInfo>()->setFirstSent(skbInfo->getFirstSent());
-    tcpHeader->addTagIfAbsent<SkbInfo>()->setLastSent(skbInfo->getLastSent());
-    tcpHeader->addTagIfAbsent<SkbInfo>()->setDeliveredTime(skbInfo->getDeliveredTime());
-    tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(skbInfo->getPayloadBytes());
-    tcpHeader->addTagIfAbsent<SkbInfo>()->setIsAppLimited((m_appLimited != 0));
-    Packet *fp = new Packet("TcpAck");
-    // rfc-3168 page 20: pure ack packets must be sent with not-ECT codepoint
-    state->sndAck = true;
-
-    // send it
-
-    //std::cout << "\nSending Ack (after options)..." << tcpHeader->str() << endl;
-    sendToIP(fp, tcpHeader);
-
-    state->sndAck = false;
-
-    // notify
-    tcpAlgorithm->ackSent();
 }
 
 void BbrConnection::calculateAppLimited()
@@ -990,6 +944,7 @@ void BbrConnection::calculateAppLimited()
 
 uint32_t BbrConnection::sendSegment(uint32_t bytes)
 {
+    updateInFlight();
     // FIXME check it: where is the right place for the next code (sacked/rexmitted)
     if (state->sack_enabled && state->afterRto) {
         // check rexmitQ and try to forward snd_nxt before sending new data
@@ -1014,9 +969,9 @@ uint32_t BbrConnection::sendSegment(uint32_t bytes)
     const auto& tmpTcpHeader = makeShared<TcpHeader>();
     tmpTcpHeader->setAckBit(true); // needed for TS option, otherwise TSecr will be set to 0
     writeHeaderOptions(tmpTcpHeader);
-    uint options_len = B(tmpTcpHeader->getHeaderLength() - TCP_MIN_HEADER_LENGTH).get();
+    //uint options_len = B(tmpTcpHeader->getHeaderLength() - TCP_MIN_HEADER_LENGTH).get();
 
-    ASSERT(options_len < state->snd_mss);
+    //ASSERT(options_len < state->snd_mss);
 
     //if (bytes + options_len > state->snd_mss)
     //    bytes = state->snd_mss - options_len;
@@ -1037,11 +992,11 @@ uint32_t BbrConnection::sendSegment(uint32_t bytes)
     tcpHeader->setWindow(updateRcvWnd());
 
     // ECN
-//    if (state->ect && state->sndCwr) {
-//        tcpHeader->setCwrBit(true);
-//        EV_INFO << "\nDCTCPInfo - sending TCP segment. Set CWR bit. Setting sndCwr to false\n";
-//        state->sndCwr = false;
-//    }
+    if (state->ect && state->sndCwr) {
+        tcpHeader->setCwrBit(true);
+        EV_INFO << "\nDCTCPInfo - sending TCP segment. Set CWR bit. Setting sndCwr to false\n";
+        state->sndCwr = false;
+    }
 
     // TODO when to set PSH bit?
     // TODO set URG bit if needed
@@ -1060,8 +1015,12 @@ uint32_t BbrConnection::sendSegment(uint32_t bytes)
     }
 
     // if sack_enabled copy region of tcpHeader to rexmitQueue
-    if (state->sack_enabled)
+    if (state->sack_enabled){
         rexmitQueue->enqueueSentData(old_snd_nxt, state->snd_nxt);
+        if(pace){
+            rexmitQueue->skbSent(state->snd_nxt, m_firstSentTime, simTime(), m_deliveredTime, false, m_delivered);
+        }
+    }
 
     // add header options and update header length (from tcpseg_temp)
     for (uint i = 0; i < tmpTcpHeader->getHeaderOptionArraySize(); i++)
@@ -1071,23 +1030,7 @@ uint32_t BbrConnection::sendSegment(uint32_t bytes)
 
     ASSERT(tcpHeader->getHeaderLength() == tmpTcpHeader->getHeaderLength());
 
-//    tcpHeader->addTagIfAbsent<SkbInfo>()->setFirstSent(m_firstSentTime);
-//    tcpHeader->addTagIfAbsent<SkbInfo>()->setLastSent(simTime());
-//    tcpHeader->addTagIfAbsent<SkbInfo>()->setDeliveredTime(m_deliveredTime);
-//    tcpHeader->addTagIfAbsent<SkbInfo>()->setDelivered(m_delivered);
-//    tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(bytes);
-
     // send it
-    //addSkbInfoTags(tcpHeader, bytes);
-
-    if(pace){
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setFirstSent(m_firstSentTime);
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setLastSent(simTime());
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setDeliveredTime(m_deliveredTime);
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setDelivered(m_delivered);
-        tcpHeader->addTagIfAbsent<SkbInfo>()->setPayloadBytes(bytes);
-    }
-
     sendToIP(tcpSegment, tcpHeader);
 
     // let application fill queue again, if there is space
@@ -1132,6 +1075,7 @@ bool BbrConnection::sendDataDuringLossRecovery(uint32_t congestionWindow)
             return false;
 
         uint32_t sentBytes = sendSegmentDuringLossRecoveryPhase(seqNum);
+
         if(sentBytes > 0){
             return true;
         }
@@ -1213,29 +1157,32 @@ void BbrConnection::updateInFlight() {
     uint32_t length = 0; // required for rexmitQueue->checkSackBlock()
     bool sacked; // required for rexmitQueue->checkSackBlock()
     bool rexmitted; // required for rexmitQueue->checkSackBlock()
-    //auto currIter = rexmitQueue->searchSackBlock(state->snd_una);
-
-//    uint32_t startVal = state->snd_una;
-//    if(packetQueue.size() > 0){
-//        Packet* packet = packetQueue.back();
-//        startVal = packet->peekAtFront<tcp::TcpHeader>()->getSequenceNo();
-//    }
-    //check front of queue and get largest seq number in queue?
+    auto currIter = rexmitQueue->searchSackBlock(state->snd_una);
 
     rexmitQueue->updateLost(rexmitQueue->getHighestSackedSeqNum());
+
+
+//    if(simTime() > 211){
+//      bool sackedTest; // required for rexmitQueue->checkSackBlock()
+//      bool rexmittedTest;
+//      std::cout << "\n CHECKING LOST PACKET IS ACTUALLY LOST: " << rexmitQueue->checkIsLost(88979097, rexmitQueue->getHighestSackedSeqNum()) << endl;
+//      std::cout << "\n IS PACKET SACKED?: " << rexmitQueue->getRegion(88979097+1448).sacked << endl;
+//      std::cout << "\n CHECKING PACKET AFTER: " << rexmitQueue->checkIsLost(88979097+1448, rexmitQueue->getHighestSackedSeqNum()) << endl;
+//      std::cout << "\n IS PACKET SACKED?: " << rexmitQueue->getRegion(88979097+1448+1448).sacked << endl;
+//    }
 
     for (uint32_t s1 = state->snd_una; seqLess(s1, state->snd_max); s1 +=
             length) {
         //rexmitQueue->checkSackBlockIter(s1, length, sacked, rexmitted, currIter);
-        rexmitQueue->checkSackBlock(s1, length, sacked, rexmitted);
+        rexmitQueue->checkSackBlockIter(s1, length, sacked, rexmitted, currIter);
         if(length == 0){
             break;
         }
         if (!sacked) {
             //if (isLost(s1) == false){
             const std::tuple<bool, bool> item = rexmitQueue->getLostAndRetransmitted(s1);
-            bool isLost = std::get<0>(item);
-            bool isRetans = std::get<1>(item);
+            bool isLost = std::get<0>(item); // @suppress("Function cannot be instantiated")
+            bool isRetans = std::get<1>(item); // @suppress("Function cannot be instantiated")
             if(!isLost || isRetans) {
                 currentInFlight += length;
             }
@@ -1272,8 +1219,6 @@ void BbrConnection::updateInFlight() {
     m_bytesInFlight = currentInFlight;
     state->pipe = m_bytesInFlight;
     m_bytesLoss = bytesLoss;
-
-    //std::cout << "\n BBR in flight: " << m_bytesInFlight << endl;
 
     //m_bytesInFlight = rexmitQueue->getInFlight();
     emit(mbytesInFlightSignal, m_bytesInFlight);
@@ -1394,9 +1339,7 @@ bool BbrConnection::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, con
 
             if (seqGreater(tmp.getEnd(), tcpHeader->getAckNo()) && seqGreater(tmp.getEnd(), state->snd_una)){
                 rexmitQueue->setSackedBit(tmp.getStart(), tmp.getEnd());
-//                if((tcpHeader->findTag<SkbInfo>())){
-//                    skbDelivered(tcpHeader->getTag<SkbInfo>());
-//                }
+                skbDelivered(tmp.getEnd());
             }
             else
                 EV_DETAIL << "Received SACK below total cumulative ACK snd_una=" << state->snd_una << "\n";
@@ -1408,229 +1351,10 @@ bool BbrConnection::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, con
         // update scoreboard
         state->sackedBytes_old = state->sackedBytes; // needed for RFC 3042 to check if last dupAck contained new sack information
         state->sackedBytes = rexmitQueue->getTotalAmountOfSackedBytes();
-        //rexmitQueue->updateLost(rexmitQueue->getHighestSackedSeqNum());
 
         emit(sackedBytesSignal, state->sackedBytes);
     }
     return true;
-}
-
-TcpHeader BbrConnection::addSacks(const Ptr<TcpHeader>& tcpHeader)
-{
-    B options_len = B(0);
-    B used_options_len = tcpHeader->getHeaderOptionArrayLength();
-    bool dsack_inserted = false; // set if dsack is subsets of a bigger sack block recently reported
-
-    uint32_t start = state->start_seqno;
-    uint32_t end = state->end_seqno;
-
-    // delete old sacks (below rcv_nxt), delete duplicates and print previous status of sacks_array:
-    auto it = state->sacks_array.begin();
-    EV_INFO << "Previous status of sacks_array: \n" << ((it != state->sacks_array.end()) ? "" : "\t EMPTY\n");
-
-    while (it != state->sacks_array.end()) {
-        if (seqLE(it->getEnd(), state->rcv_nxt) || it->empty()) {
-            EV_DETAIL << "\t SACK in sacks_array: " << " " << it->str() << " delete now\n";
-            it = state->sacks_array.erase(it);
-        }
-        else {
-            EV_DETAIL << "\t SACK in sacks_array: " << " " << it->str() << endl;
-
-            ASSERT(seqGE(it->getStart(), state->rcv_nxt));
-
-            it++;
-        }
-    }
-
-    if (used_options_len > TCP_OPTIONS_MAX_SIZE - TCP_OPTION_SACK_MIN_SIZE) {
-        EV_ERROR << "ERROR: Failed to addSacks - at least 10 free bytes needed for SACK - used_options_len=" << used_options_len << endl;
-
-        // reset flags:
-        state->snd_sack = false;
-        state->snd_dsack = false;
-        state->start_seqno = 0;
-        state->end_seqno = 0;
-        return *tcpHeader;
-    }
-
-    if (start != end) {
-        if (state->snd_dsack) { // SequenceNo < rcv_nxt
-            // RFC 2883, page 3:
-            // "(3) The left edge of the D-SACK block specifies the first sequence
-            // number of the duplicate contiguous sequence, and the right edge of
-            // the D-SACK block specifies the sequence number immediately following
-            // the last sequence in the duplicate contiguous sequence."
-            if (seqLess(start, state->rcv_nxt) && seqLess(state->rcv_nxt, end))
-                end = state->rcv_nxt;
-
-            dsack_inserted = true;
-            Sack nSack(start, end);
-            state->sacks_array.push_front(nSack);
-            EV_DETAIL << "inserted DSACK entry: " << nSack.str() << "\n";
-        }
-        else {
-            uint32_t contStart = receiveQueue->getLE(start);
-            uint32_t contEnd = receiveQueue->getRE(end);
-
-            Sack newSack(contStart, contEnd);
-            state->sacks_array.push_front(newSack);
-            EV_DETAIL << "Inserted SACK entry: " << newSack.str() << "\n";
-        }
-
-        // RFC 2883, page 3:
-        // "(3) The left edge of the D-SACK block specifies the first sequence
-        // number of the duplicate contiguous sequence, and the right edge of
-        // the D-SACK block specifies the sequence number immediately following
-        // the last sequence in the duplicate contiguous sequence."
-
-        // RFC 2018, page 4:
-        // "* The first SACK block (i.e., the one immediately following the
-        // kind and length fields in the option) MUST specify the contiguous
-        // block of data containing the segment which triggered this ACK,
-        // unless that segment advanced the Acknowledgment Number field in
-        // the header.  This assures that the ACK with the SACK option
-        // reflects the most recent change in the data receiver's buffer
-        // queue."
-
-        // RFC 2018, page 4:
-        // "* The first SACK block (i.e., the one immediately following the
-        // kind and length fields in the option) MUST specify the contiguous
-        // block of data containing the segment which triggered this ACK,"
-
-        // RFC 2883, page 3:
-        // "(4) If the D-SACK block reports a duplicate contiguous sequence from
-        // a (possibly larger) block of data in the receiver's data queue above
-        // the cumulative acknowledgement, then the second SACK block in that
-        // SACK option should specify that (possibly larger) block of data.
-        //
-        // (5) Following the SACK blocks described above for reporting duplicate
-        // segments, additional SACK blocks can be used for reporting additional
-        // blocks of data, as specified in RFC 2018."
-
-        // RFC 2018, page 4:
-        // "* The SACK option SHOULD be filled out by repeating the most
-        // recently reported SACK blocks (based on first SACK blocks in
-        // previous SACK options) that are not subsets of a SACK block
-        // already included in the SACK option being constructed."
-
-        it = state->sacks_array.begin();
-        if (dsack_inserted)
-            it++;
-
-        for (; it != state->sacks_array.end(); it++) {
-            ASSERT(!it->empty());
-
-            auto it2 = it;
-            it2++;
-            while (it2 != state->sacks_array.end()) {
-                if (it->contains(*it2)) {
-                    EV_DETAIL << "sack matched, delete contained : a=" << it->str() << ", b=" << it2->str() << endl;
-                    it2 = state->sacks_array.erase(it2);
-                }
-                else
-                    it2++;
-            }
-        }
-    }
-
-    uint n = state->sacks_array.size();
-
-    uint maxnode = ((B(TCP_OPTIONS_MAX_SIZE - used_options_len).get()) - 2) / 8; // 2: option header, 8: size of one sack entry
-
-    if (n > maxnode)
-        n = maxnode;
-
-    if (n == 0) {
-        if (dsack_inserted)
-            state->sacks_array.pop_front(); // delete DSACK entry
-
-        // reset flags:
-        state->snd_sack = false;
-        state->snd_dsack = false;
-        state->start_seqno = 0;
-        state->end_seqno = 0;
-
-        return *tcpHeader;
-    }
-
-    uint optArrSize = tcpHeader->getHeaderOptionArraySize();
-
-    uint optArrSizeAligned = optArrSize;
-
-    while (B(used_options_len).get() % 4 != 2) {
-        used_options_len++;
-        optArrSizeAligned++;
-    }
-
-    while (optArrSize < optArrSizeAligned) {
-        tcpHeader->appendHeaderOption(new TcpOptionNop());
-        optArrSize++;
-    }
-
-    ASSERT(B(used_options_len).get() % 4 == 2);
-
-    TcpOptionSack *option = new TcpOptionSack();
-    option->setLength(8 * n + 2);
-    option->setSackItemArraySize(n);
-
-    // write sacks from sacks_array to options
-    uint counter = 0;
-
-    for (it = state->sacks_array.begin(); it != state->sacks_array.end() && counter < n; it++) {
-        ASSERT(it->getStart() != it->getEnd());
-        option->setSackItem(counter++, *it);
-    }
-
-    // independent of "n" we always need 2 padding bytes (NOP) to make: (used_options_len % 4 == 0)
-    options_len = used_options_len + TCP_OPTION_SACK_ENTRY_SIZE * n + TCP_OPTION_HEAD_SIZE; // 8 bytes for each SACK (n) + 2 bytes for kind&length
-
-    ASSERT(options_len <= TCP_OPTIONS_MAX_SIZE); // Options length allowed? - maximum: 40 Bytes
-
-    tcpHeader->appendHeaderOption(option);
-    tcpHeader->setHeaderLength(TCP_MIN_HEADER_LENGTH + tcpHeader->getHeaderOptionArrayLength());
-    tcpHeader->setChunkLength(tcpHeader->getHeaderLength());
-    // update number of sent sacks
-    state->snd_sacks += n;
-
-    emit(sndSacksSignal, state->snd_sacks);
-
-    EV_INFO << n << " SACK(s) added to header:\n";
-
-    for (uint t = 0; t < n; t++) {
-        EV_INFO << t << ". SACK:" << " [" << option->getSackItem(t).getStart() << ".." << option->getSackItem(t).getEnd() << ")";
-
-        if (t == 0) {
-            if (state->snd_dsack)
-                EV_INFO << " (D-SACK)";
-            else if (seqLE(option->getSackItem(t).getEnd(), state->rcv_nxt)) {
-                EV_INFO << " (received segment filled out a gap)";
-                state->snd_dsack = true; // Note: Set snd_dsack to delete first sack from sacks_array
-            }
-        }
-
-        EV_INFO << endl;
-    }
-
-    // RFC 2883, page 3:
-    // "(1) A D-SACK block is only used to report a duplicate contiguous
-    // sequence of data received by the receiver in the most recent packet.
-    //
-    // (2) Each duplicate contiguous sequence of data received is reported
-    // in at most one D-SACK block.  (I.e., the receiver sends two identical
-    // D-SACK blocks in subsequent packets only if the receiver receives two
-    // duplicate segments.)//
-    //
-    // In case of d-sack: delete first sack (d-sack) and move old sacks by one to the left
-    if (dsack_inserted)
-        state->sacks_array.pop_front(); // delete DSACK entry
-
-    // reset flags:
-    state->snd_sack = false;
-    state->snd_dsack = false;
-    state->start_seqno = 0;
-    state->end_seqno = 0;
-
-    return *tcpHeader;
 }
 
 }

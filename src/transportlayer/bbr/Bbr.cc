@@ -16,6 +16,8 @@
 #include "Bbr.h"
 
 #include <inet/networklayer/ipv4/Ipv4Header_m.h>
+
+
 namespace inet {
 namespace tcp {
 
@@ -38,6 +40,11 @@ TcpConnection* Bbr::createConnection(int socketId)
     auto module = check_and_cast<TcpConnection*>(moduleType->createScheduleInit(submoduleName, this));
     module->initConnection(this, socketId);
     return module;
+}
+
+TcpSendQueue *Bbr::createSendQueue()
+{
+    return new BbrSendQueue();
 }
 
 }

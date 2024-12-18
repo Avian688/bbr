@@ -69,6 +69,9 @@ class BbrFlavour : public BbrFamily
     static simsignal_t recoverSignal;
     static simsignal_t lossRecoverySignal;
     static simsignal_t highRxtSignal;
+    static simsignal_t recoveryPointSignal;
+    static simsignal_t connMinRttSignal;
+
     simtime_t rtt;
     std::default_random_engine generator;
     uint32_t m_extraAcked[2] = {0, 0};
@@ -129,7 +132,7 @@ class BbrFlavour : public BbrFamily
 
     virtual void handleProbeRTT();
 
-    virtual void saveCwnd();
+    virtual void saveCwnd(bool retrans);
 
     virtual void restoreCwnd();
 
