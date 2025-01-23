@@ -132,7 +132,7 @@ class BbrFlavour : public BbrFamily
 
     virtual void handleProbeRTT();
 
-    virtual void saveCwnd(bool retrans);
+    virtual void saveCwnd();
 
     virtual void restoreCwnd();
 

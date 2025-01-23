@@ -906,8 +906,9 @@ void BbrConnection::skbDelivered(uint32_t seqNum)
                 m_rateSample.m_ackElapsed = simTime() - skbRegion.m_deliveredTime;
                 m_rateSample.m_priorDelivered = skbRegion.m_delivered;
                 m_rateSample.m_priorTime = skbRegion.m_deliveredTime;
-                m_rateSample.m_sendElapsed = skbRegion.m_lastSentTime - skbRegion.m_firstSentTime;
                 m_rateSample.m_isAppLimited = skbRegion.m_isAppLimited;
+                m_rateSample.m_sendElapsed = skbRegion.m_lastSentTime - skbRegion.m_firstSentTime;
+
                 m_firstSentTime = skbRegion.m_lastSentTime;
 
                 emit(msendElapsedSignal, m_rateSample.m_sendElapsed);
@@ -924,22 +925,23 @@ void BbrConnection::skbDelivered(uint32_t seqNum)
 
 void BbrConnection::calculateAppLimited()
 {
-    uint32_t cWnd = dynamic_cast<BbrFlavour*>(tcpAlgorithm)->getCwnd();
-    uint32_t in_flight = m_bytesInFlight;
-    const uint32_t lostOut = m_bytesLoss;
-    uint32_t segmentSize = state->snd_mss;
-    const uint32_t retransOut = 0;
-    //const uint32_t tailSeq;
-    //const uint32_t nextTx;
-
-    /* Missing checks from Linux:
-     * - Nothing in sending host's qdisc queues or NIC tx queue. NOT IMPLEMENTED
-     */
-    //tailSeq - nextTx < static_cast<int32_t>(segmentSize) &&
-    if (in_flight < cWnd && lostOut <= retransOut)             // All lost packets have been retransmitted.
-    {
-        m_appLimited = std::max<uint32_t>(m_delivered + in_flight, 1);
-    }
+//    uint32_t cWnd = dynamic_cast<BbrFlavour*>(tcpAlgorithm)->getCwnd();
+//    uint32_t in_flight = m_bytesInFlight;
+//    const uint32_t lostOut = m_bytesLoss;
+//    uint32_t segmentSize = state->snd_mss;
+//    const uint32_t retransOut = 0;
+//    const uint32_t tailSeq = rexmitQueue->getTailSequence();
+//    const uint32_t nextTx = state->snd_nxt;
+//
+//    /* Missing checks from Linux:
+//     * - Nothing in sending host's qdisc queues or NIC tx queue. NOT IMPLEMENTED
+//     */
+//    //tailSeq - nextTx < static_cast<int32_t>(segmentSize) &&
+//    if (tailSeq - nextTx < state->snd_mss && in_flight < cWnd && lostOut <= retransOut)             // All lost packets have been retransmitted.
+//    {
+        //m_appLimited = std::max<uint32_t>(m_delivered + in_flight, 1);
+    m_appLimited = 0;
+    //}
 }
 
 uint32_t BbrConnection::sendSegment(uint32_t bytes)
@@ -1018,7 +1020,7 @@ uint32_t BbrConnection::sendSegment(uint32_t bytes)
     if (state->sack_enabled){
         rexmitQueue->enqueueSentData(old_snd_nxt, state->snd_nxt);
         if(pace){
-            rexmitQueue->skbSent(state->snd_nxt, m_firstSentTime, simTime(), m_deliveredTime, false, m_delivered);
+            rexmitQueue->skbSent(state->snd_nxt, m_firstSentTime, simTime(), m_deliveredTime, false, m_delivered, m_appLimited);
         }
     }
 
@@ -1031,6 +1033,9 @@ uint32_t BbrConnection::sendSegment(uint32_t bytes)
     ASSERT(tcpHeader->getHeaderLength() == tmpTcpHeader->getHeaderLength());
 
     // send it
+
+    calculateAppLimited();
+
     sendToIP(tcpSegment, tcpHeader);
 
     // let application fill queue again, if there is space
@@ -1123,7 +1128,7 @@ void BbrConnection::updateSample(uint32_t delivered, uint32_t lost, bool is_sack
     //  auto snd_us = m_rateSample.m_interval;  /* send phase */
     //  auto ack_us = Simulator::Now () - m_rateSample.m_prior_mstamp;
     //  m_rateSample.m_interval = std::max (snd_us, ack_us);
-
+    //m_rateSample.m_ackElapsed = simTime() - m_rateSample.m_priorTime;
     m_rateSample.m_interval = std::max(m_rateSample.m_sendElapsed, m_rateSample.m_ackElapsed);
     m_rateSample.m_delivered = m_delivered - m_rateSample.m_priorDelivered;
 
@@ -1151,59 +1156,53 @@ void BbrConnection::updateSample(uint32_t delivered, uint32_t lost, bool is_sack
 
 void BbrConnection::updateInFlight() {
     ASSERT(state->sack_enabled);
+
     state->highRxt = rexmitQueue->getHighestRexmittedSeqNum();
     uint32_t currentInFlight = 0;
     uint32_t bytesLoss = 0;
     uint32_t length = 0; // required for rexmitQueue->checkSackBlock()
     bool sacked; // required for rexmitQueue->checkSackBlock()
     bool rexmitted; // required for rexmitQueue->checkSackBlock()
-    auto currIter = rexmitQueue->searchSackBlock(state->snd_una);
+    //auto currIter = rexmitQueue->searchSackBlock(state->snd_una);
 
     rexmitQueue->updateLost(rexmitQueue->getHighestSackedSeqNum());
 
 
-//    if(simTime() > 211){
-//      bool sackedTest; // required for rexmitQueue->checkSackBlock()
-//      bool rexmittedTest;
-//      std::cout << "\n CHECKING LOST PACKET IS ACTUALLY LOST: " << rexmitQueue->checkIsLost(88979097, rexmitQueue->getHighestSackedSeqNum()) << endl;
-//      std::cout << "\n IS PACKET SACKED?: " << rexmitQueue->getRegion(88979097+1448).sacked << endl;
-//      std::cout << "\n CHECKING PACKET AFTER: " << rexmitQueue->checkIsLost(88979097+1448, rexmitQueue->getHighestSackedSeqNum()) << endl;
-//      std::cout << "\n IS PACKET SACKED?: " << rexmitQueue->getRegion(88979097+1448+1448).sacked << endl;
-//    }
-
-    for (uint32_t s1 = state->snd_una; seqLess(s1, state->snd_max); s1 +=
-            length) {
-        //rexmitQueue->checkSackBlockIter(s1, length, sacked, rexmitted, currIter);
-        rexmitQueue->checkSackBlockIter(s1, length, sacked, rexmitted, currIter);
-        if(length == 0){
-            break;
-        }
-        if (!sacked) {
-            //if (isLost(s1) == false){
-            const std::tuple<bool, bool> item = rexmitQueue->getLostAndRetransmitted(s1);
-            bool isLost = std::get<0>(item); // @suppress("Function cannot be instantiated")
-            bool isRetans = std::get<1>(item); // @suppress("Function cannot be instantiated")
-            if(!isLost || isRetans) {
-                currentInFlight += length;
-            }
-
-            if(isLost){
-                bytesLoss += length;
-            }
-            // RFC 3517, pages 3 and 4: "(b) If S1 <= HighRxt:
-            //
-            //     Pipe is incremented by 1 octet.
-            //
-            //     The effect of this condition is that pipe is incremented for
-            //     the retransmission of the octet.
-            //
-            //  Note that octets retransmitted without being considered lost are
-            //  counted twice by the above mechanism."
-//            if (seqLess(s1, state->highRxt)){
+//    for (uint32_t s1 = state->snd_una; seqLess(s1, state->snd_max); s1 += length) {
+//        //rexmitQueue->checkSackBlockIter(s1, length, sacked, rexmitted, currIter);
+//        rexmitQueue->checkSackBlockIter(s1, length, sacked, rexmitted, currIter);
+//        if(length == 0){
+//            break;
+//        }
+//        if (!sacked) {
+//            //if (isLost(s1) == false){
+//            const std::tuple<bool, bool> item = rexmitQueue->getLostAndRetransmitted(s1);
+//            bool isLost = std::get<0>(item); // @suppress("Function cannot be instantiated")
+//            bool isRetans = std::get<1>(item); // @suppress("Function cannot be instantiated")
+//            if(!isLost || seqLess(s1, state->highRxt)){
 //                currentInFlight += length;
 //            }
-        }
-    }
+////            else if(isRetans){
+////                currentInFlight += length;
+////            }
+//
+//            if(isLost){
+//                bytesLoss += length;
+//            }
+//            // RFC 3517, pages 3 and 4: "(b) If S1 <= HighRxt:
+//            //
+//            //     Pipe is incremented by 1 octet.
+//            //
+//            //     The effect of this condition is that pipe is incremented for
+//            //     the retransmission of the octet.
+//            //
+//            //  Note that octets retransmitted without being considered lost are
+//            //  counted twice by the above mechanism."
+////            if (seqLess(s1, state->highRxt)){
+////                currentInFlight += length;
+////            }
+//        }
+//    }
 //    uint32_t paceBufferedQueueSize = packetQueue.size() * (state->snd_mss);
 //    //if(currentInFlight < bufferedBytes){
 //    //    m_bytesInFlight = state->snd_mss;//-12;
@@ -1216,11 +1215,13 @@ void BbrConnection::updateInFlight() {
 //        m_bytesInFlight = currentInFlight - bufferedBytes;
 //    }
     //}
-    m_bytesInFlight = currentInFlight;
-    state->pipe = m_bytesInFlight;
-    m_bytesLoss = bytesLoss;
+    //m_bytesInFlight = currentInFlight;
+    //m_bytesLoss = bytesLoss;
 
-    //m_bytesInFlight = rexmitQueue->getInFlight();
+    m_bytesInFlight = rexmitQueue->getInFlight();
+    m_bytesLoss = rexmitQueue->getLost();
+    state->pipe = m_bytesInFlight;
+
     emit(mbytesInFlightSignal, m_bytesInFlight);
     emit(mbytesLossSignal, m_bytesLoss);
 }
@@ -1339,7 +1340,10 @@ bool BbrConnection::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, con
 
             if (seqGreater(tmp.getEnd(), tcpHeader->getAckNo()) && seqGreater(tmp.getEnd(), state->snd_una)){
                 rexmitQueue->setSackedBit(tmp.getStart(), tmp.getEnd());
-                skbDelivered(tmp.getEnd());
+
+                for (uint32_t i = tmp.getStart(); i <= tmp.getEnd(); i += state->snd_mss) {
+                    skbDelivered(i+state->snd_mss);
+                }
             }
             else
                 EV_DETAIL << "Received SACK below total cumulative ACK snd_una=" << state->snd_una << "\n";

@@ -99,7 +99,6 @@ public:
 
     virtual void setPipe() override;
 
-
 protected:
     uint32_t m_lastAckedSackedBytes;
 
@@ -112,6 +111,12 @@ protected:
     RateSample m_rateSample;
     uint32_t m_bytesInFlight;
     uint32_t m_bytesLoss;
+
+    uint32_t m_sentSize;
+    uint32_t m_sackedOut;
+    uint32_t m_lostOut;
+    uint32_t m_retrans;
+
 
     uint32_t m_appLimited; //NOT NEEDED
     bool m_rateAppLimited; //NOT NEEDED
