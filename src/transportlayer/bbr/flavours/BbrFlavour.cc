@@ -132,9 +132,7 @@ void BbrFlavour::processRexmitTimer(TcpEventCode &event) {
 
     saveCwnd();
     state->m_roundStart = true;
-
     state->snd_cwnd = state->m_minPipeCwnd;
-
     conn->emit(cwndSignal, state->snd_cwnd);
 
     EV_INFO << "Begin Slow Start: resetting cwnd to " << state->snd_cwnd
@@ -158,8 +156,8 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
         if (seqGE(state->snd_una, state->recoveryPoint)) {
             EV_INFO << "Loss Recovery terminated.\n";
             state->lossRecovery = false;
-            state->snd_cwnd = state->ssthresh;
             state->m_packetConservation = false;
+            state->snd_cwnd = state->ssthresh;
             restoreCwnd();
             conn->emit(lossRecoverySignal, 0);
         }
@@ -209,13 +207,15 @@ void BbrFlavour::receivedDuplicateAck() {
                 // RecoveryPoint."
                 if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
                     state->recoveryPoint = state->snd_max; // HighData = snd_max
-                    state->lossRecovery = true;
                     //mark head as lost
                     dynamic_cast<BbrConnection*>(conn)->setSackedHeadLost();
                     saveCwnd();
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
                     state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<BbrConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
                     state->m_packetConservation = true;
+                    state->lossRecovery = true;
+
+                    //saveCwnd();
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
                 }
             }
@@ -260,6 +260,7 @@ void BbrFlavour::receivedDuplicateAck() {
         // as missing should be a reasonable approach."
 
     }
+
     state->m_delivered = dynamic_cast<BbrConnection*>(conn)->getDelivered();
     updateModelAndState();
     updateControlParameters();

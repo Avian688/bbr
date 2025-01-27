@@ -1340,9 +1340,10 @@ bool BbrConnection::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, con
 
             if (seqGreater(tmp.getEnd(), tcpHeader->getAckNo()) && seqGreater(tmp.getEnd(), state->snd_una)){
                 rexmitQueue->setSackedBit(tmp.getStart(), tmp.getEnd());
-
-                for (uint32_t i = tmp.getStart(); i <= tmp.getEnd(); i += state->snd_mss) {
+                uint32_t seqNo = tmp.getStart();
+                while(seqNo < tmp.getEnd()) {
                     skbDelivered(i+state->snd_mss);
+                    seqNo += state->snd_mss;
                 }
             }
             else
