@@ -2,7 +2,7 @@
 # OMNeT++/OMNEST Makefile for $(LIB_PREFIX)bbr
 #
 # This file was generated with the command:
-#  opp_makemake --make-so -f --deep -KINET4_5_PROJ=../../inet4.5 -KTCPPACED_PROJ=../../tcpPaced -DINET_IMPORT -I$$\(INET4_5_PROJ\)/src -L$$\(INET4_5_PROJ\)/src -L$$\(TCPPACED_PROJ\)/src -lINET$$\(D\) -ltcpPaced$$\(D\)
+#  opp_makemake --make-so -f --deep -KINET4_5_PROJ=../../inet4.5 -KTCPGOODPUTAPPLICATIONS_PROJ=../../tcpGoodputApplications -KTCPPACED_PROJ=../../tcpPaced -DINET_IMPORT -I$$\(INET4_5_PROJ\)/src -L$$\(INET4_5_PROJ\)/src -L$$\(TCPGOODPUTAPPLICATIONS_PROJ\)/src -L$$\(TCPPACED_PROJ\)/src -lINET$$\(D\) -ltcpGoodputApplications$$\(D\) -ltcpPaced$$\(D\)
 #
 
 # Name of target to be created (-o option)
@@ -20,7 +20,7 @@ INCLUDE_PATH = -I$(INET4_5_PROJ)/src
 EXTRA_OBJS =
 
 # Additional libraries (-L, -l options)
-LIBS = $(LDFLAG_LIBPATH)$(INET4_5_PROJ)/src $(LDFLAG_LIBPATH)$(TCPPACED_PROJ)/src  -lINET$(D) -ltcpPaced$(D)
+LIBS = $(LDFLAG_LIBPATH)$(INET4_5_PROJ)/src $(LDFLAG_LIBPATH)$(TCPGOODPUTAPPLICATIONS_PROJ)/src $(LDFLAG_LIBPATH)$(TCPPACED_PROJ)/src  -lINET$(D) -ltcpGoodputApplications$(D) -ltcpPaced$(D)
 
 # Output directory
 PROJECT_OUTPUT_DIR = ../out
@@ -28,18 +28,10 @@ PROJECTRELATIVE_PATH = src
 O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 
 # Object files for local .cc, .msg and .sm files
-OBJS = \
-    $O/transportlayer/bbr/Bbr.o \
-    $O/transportlayer/bbr/BbrConnection.o \
-    $O/transportlayer/bbr/BbrSendQueue.o \
-    $O/transportlayer/bbr/flavours/BbrFamily.o \
-    $O/transportlayer/bbr/flavours/BbrFlavour.o \
-    $O/transportlayer/bbr/SkbInfo_m.o \
-    $O/transportlayer/bbr/flavours/BbrFamilyState_m.o
+OBJS = $O/transportlayer/bbr/Bbr.o $O/transportlayer/bbr/BbrConnection.o $O/transportlayer/bbr/flavours/BbrFamily.o $O/transportlayer/bbr/flavours/BbrFlavour.o $O/transportlayer/bbr/flavours/BbrFamilyState_m.o
 
 # Message files
 MSGFILES = \
-    transportlayer/bbr/SkbInfo.msg \
     transportlayer/bbr/flavours/BbrFamilyState.msg
 
 # SM files
@@ -47,6 +39,7 @@ SMFILES =
 
 # Other makefile variables (-K)
 INET4_5_PROJ=../../inet4.5
+TCPGOODPUTAPPLICATIONS_PROJ=../../tcpGoodputApplications
 TCPPACED_PROJ=../../tcpPaced
 
 #------------------------------------------------------------------------------
@@ -68,7 +61,7 @@ include $(CONFIGFILE)
 # Simulation kernel and user interface libraries
 OMNETPP_LIBS = -loppenvir$D $(KERNEL_LIBS) $(SYS_LIBS)
 ifneq ($(PLATFORM),win32)
-LIBS += -Wl,-rpath,$(abspath $(INET4_5_PROJ)/src) -Wl,-rpath,$(abspath $(TCPPACED_PROJ)/src)
+LIBS += -Wl,-rpath,$(abspath $(INET4_5_PROJ)/src) -Wl,-rpath,$(abspath $(TCPGOODPUTAPPLICATIONS_PROJ)/src) -Wl,-rpath,$(abspath $(TCPPACED_PROJ)/src)
 endif
 
 COPTS = $(CFLAGS) $(IMPORT_DEFINES) -DINET_IMPORT $(INCLUDE_PATH) -I$(OMNETPP_INCL_DIR)

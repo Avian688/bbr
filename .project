@@ -4,6 +4,7 @@
 	<comment></comment>
 	<projects>
 		<project>inet4.5</project>
+		<project>tcpGoodputApplications</project>
 		<project>tcpPaced</project>
 	</projects>
 	<buildSpec>

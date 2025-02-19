@@ -19,7 +19,6 @@
 #include <inet/transportlayer/tcp/TcpConnection.h>
 #include "../../../../tcpPaced/src/transportlayer/tcp/TcpPaced.h"
 #include "BbrConnection.h"
-#include "BbrSendQueue.h"
 
 namespace inet {
 namespace tcp {
@@ -32,8 +31,6 @@ protected:
     /** Factory method; may be overriden for customizing Tcp */
     virtual TcpConnection* createConnection(int socketId) override;
 
-public:
-    virtual TcpSendQueue *createSendQueue() override;
 };
 
 } // namespace tcp

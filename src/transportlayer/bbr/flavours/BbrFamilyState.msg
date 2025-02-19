@@ -9,7 +9,6 @@ import inet.common.INETDefs;
 import inet.transportlayer.tcp.flavours.TcpTahoeRenoFamilyState;
 
 namespace inet::tcp;
-
 ///
 /// State variables for OrbTCP.
 ///
@@ -31,7 +30,6 @@ struct BbrFamilyStateVariables extends TcpTahoeRenoFamilyStateVariables
     
     uint32_t m_bandwidthWindowLength = 10;
     
-    simtime_t connMinRtt = SIMTIME_MAX;
     simtime_t m_lastRtt = 0;
     
     uint32 m_nextRoundDelivered = 0;

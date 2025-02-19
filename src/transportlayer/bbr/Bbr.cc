@@ -42,10 +42,5 @@ TcpConnection* Bbr::createConnection(int socketId)
     return module;
 }
 
-TcpSendQueue *Bbr::createSendQueue()
-{
-    return new BbrSendQueue();
-}
-
 }
 }

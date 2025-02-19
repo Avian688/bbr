@@ -34,6 +34,9 @@ simsignal_t BbrFlavour::recoverSignal = cComponent::registerSignal("recover");
 simsignal_t BbrFlavour::lossRecoverySignal = cComponent::registerSignal("lossRecovery");
 simsignal_t BbrFlavour::highRxtSignal = cComponent::registerSignal("highRxt");
 simsignal_t BbrFlavour::recoveryPointSignal = cComponent::registerSignal("recoveryPoint");
+simsignal_t BbrFlavour::nextRoundDeliveredSignal = cComponent::registerSignal("nextRoundDelivered");
+simsignal_t BbrFlavour::restoreCwndSignal = cComponent::registerSignal("restoreCwnd");
+
 BbrFlavour::BbrFlavour() : BbrFamily(),
     state((BbrStateVariables *&)TcpAlgorithm::state)
 {
@@ -46,8 +49,6 @@ void BbrFlavour::initialize()
 
 void BbrFlavour::established(bool active)
 {
-    //state->snd_cwnd = state->B * state->T.dbl();
-    //state->snd_cwnd = 7300; //5 packets
     if(!state->m_isInitialized){
         dynamic_cast<BbrConnection*>(conn)->changeIntersendingTime(0.0000001); //do not pace intial packets as RTT is unknown
 
@@ -76,7 +77,7 @@ void BbrFlavour::established(bool active)
         state->m_isInitialized = true;
     }
     //state->m_ackEpochTime = simTime();
-    EV_DETAIL << "OrbTCP initial CWND is set to " << state->snd_cwnd << "\n";
+    EV_DETAIL << "BBR initial CWND is set to " << state->snd_cwnd << "\n";
     if (active) {
         // finish connection setup with ACK (possibly piggybacked on data)
         EV_INFO << "Completing connection setup by sending ACK (possibly piggybacked on data)\n";
@@ -101,47 +102,25 @@ void BbrFlavour::recalculateSlowStartThreshold() {
 //    uint32_t flight_size = state->snd_max - state->snd_una;
     //state->ssthresh = std::max(flight_size / 2, 2 * state->m_segmentSize);
 
-    saveCwnd();
+    //saveCwnd();
     conn->emit(ssthreshSignal, state->ssthresh);
 }
 
 void BbrFlavour::processRexmitTimer(TcpEventCode &event) {
-    TcpTahoeRenoFamily::processRexmitTimer(event);
-
-    if (event == TCP_E_ABORT)
-        return;
-
-    // After REXMIT timeout TCP Reno should start slow start with snd_cwnd = snd_mss.
-    //
-    // If calling "retransmitData();" there is no rexmit limitation (bytesToSend > snd_cwnd)
-    // therefore "sendData();" has been modified and is called to rexmit outstanding data.
-    //
-    // RFC 2581, page 5:
-    // "Furthermore, upon a timeout cwnd MUST be set to no more than the loss
-    // window, LW, which equals 1 full-sized segment (regardless of the
-    // value of IW).  Therefore, after retransmitting the dropped segment
-    // the TCP sender uses the slow start algorithm to increase the window
-    // from 1 full-sized segment to the new value of ssthresh, at which
-    // point congestion avoidance again takes over."
-
-    // begin Slow Start (RFC 2581)
-    //recalculateSlowStartThreshold();
-
-    dynamic_cast<BbrConnection*>(conn)->setAllSackedLost();
-    dynamic_cast<BbrConnection*>(conn)->updateInFlight();
+    TcpPacedFamily::processRexmitTimer(event);
 
     saveCwnd();
     state->m_roundStart = true;
-    state->snd_cwnd = state->m_minPipeCwnd;
+    state->snd_cwnd = state->snd_mss*4;
     conn->emit(cwndSignal, state->snd_cwnd);
 
     EV_INFO << "Begin Slow Start: resetting cwnd to " << state->snd_cwnd
                    << ", ssthresh=" << state->ssthresh << "\n";
 
     state->afterRto = true;
-    dynamic_cast<BbrConnection*>(conn)->cancelPaceTimer();
+    dynamic_cast<TcpPacedConnection*>(conn)->cancelPaceTimer();
 
-    dynamic_cast<BbrConnection*>(conn)->retransmitNext(true);
+    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(true);
     sendData(false);
 }
 
@@ -180,8 +159,8 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
 
 void BbrFlavour::receivedDuplicateAck() {
     //dynamic_cast<BbrConnection*>(conn)->updateInFlight();
-
-    if (state->dupacks == state->dupthresh) {
+    bool isHighRxtLost = dynamic_cast<BbrConnection*>(conn)->checkIsLost(dynamic_cast<TcpPacedConnection*>(conn)->getHighestRexmittedSeqNum());
+    if (state->dupacks == state->dupthresh || isHighRxtLost) {
             EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
@@ -208,21 +187,22 @@ void BbrFlavour::receivedDuplicateAck() {
                 if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
                     state->recoveryPoint = state->snd_max; // HighData = snd_max
                     //mark head as lost
-                    dynamic_cast<BbrConnection*>(conn)->setSackedHeadLost();
+                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
                     saveCwnd();
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-                    state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<BbrConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
+                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
+                    state->snd_cwnd = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
                     state->m_packetConservation = true;
                     state->lossRecovery = true;
 
                     //saveCwnd();
+                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
                 }
             }
 
             //state->snd_cwnd = state->ssthresh;
 
-            dynamic_cast<BbrConnection*>(conn)->retransmitNext(false);
             sendData(false);
 
             if (state->sack_enabled) {
@@ -261,7 +241,7 @@ void BbrFlavour::receivedDuplicateAck() {
 
     }
 
-    state->m_delivered = dynamic_cast<BbrConnection*>(conn)->getDelivered();
+    state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
     updateModelAndState();
     updateControlParameters();
 
@@ -313,7 +293,7 @@ void BbrFlavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
     state->rexmit_timeout = rto;
 
     state->m_lastRtt = srtt;
-    state->connMinRtt = std::min(srtt, state->connMinRtt);
+    dynamic_cast<TcpPacedConnection*>(conn)->setMinRtt(std::min(srtt, dynamic_cast<TcpPacedConnection*>(conn)->getMinRtt()));
 
     // record statistics
     EV_DETAIL << "Measured RTT=" << (newRTT * 1000) << "ms, updated SRTT=" << (srtt * 1000)
@@ -323,7 +303,7 @@ void BbrFlavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
     conn->emit(srttSignal, srtt);
     conn->emit(rttvarSignal, rttvar);
     conn->emit(rtoSignal, rto);
-    conn->emit(connMinRttSignal, state->connMinRtt);
+    conn->emit(connMinRttSignal, dynamic_cast<BbrConnection*>(conn)->getMinRtt());
 }
 
 void BbrFlavour::updateModelAndState()
@@ -495,6 +475,7 @@ void BbrFlavour::updateRound()
         state->m_packetConservation = false;
 
         conn->emit(roundCountSignal, state->m_roundCount);
+        conn->emit(nextRoundDeliveredSignal, state->m_nextRoundDelivered);
     }
     else
     {
@@ -592,6 +573,8 @@ void BbrFlavour::handleProbeRTT()
         state->m_probeRttDoneStamp = simTime() + state->m_probeRttDuration;
         state->m_probeRttRoundDone = false;
         state->m_nextRoundDelivered = state->m_delivered;
+
+        conn->emit(nextRoundDeliveredSignal, state->m_nextRoundDelivered);
     }
     else if (state->m_probeRttDoneStamp != 0)
     {
@@ -624,6 +607,7 @@ void BbrFlavour::saveCwnd()
 void BbrFlavour::restoreCwnd()
 {
     state->snd_cwnd = std::max(state->m_priorCwnd, state->snd_cwnd);
+    conn->emit(restoreCwndSignal, state->snd_cwnd);
 }
 
 void BbrFlavour::exitProbeRTT()
@@ -654,7 +638,7 @@ void BbrFlavour::setPacingRate(double gain)
     uint32_t maxRate = 500000000; // 4Gbps
     rate = std::min(rate, maxRate);
 
-    if (!state->m_hasSeenRtt && state->connMinRtt != SIMTIME_MAX)
+    if (!state->m_hasSeenRtt && dynamic_cast<BbrConnection*>(conn)->getMinRtt() != SIMTIME_MAX)
     {
         initPacingRate();
     }
@@ -736,13 +720,14 @@ void BbrFlavour::initPacingRate()
     //}
 
     simtime_t rtt;
-    if (state->connMinRtt != SIMTIME_MAX)
+    simtime_t connMinRtt = dynamic_cast<BbrConnection*>(conn)->getMinRtt();
+    if (connMinRtt != SIMTIME_MAX)
     {
-        if (state->connMinRtt < 0.001){
+        if (connMinRtt < 0.001){
             rtt = 0.001;
         }
         else{
-            rtt = state->connMinRtt;
+            rtt = connMinRtt;
         }
         state->m_hasSeenRtt = true;
     }
@@ -791,6 +776,63 @@ void BbrFlavour::initFullPipe()
     state->m_isPipeFilled = false;
     state->m_fullBandwidth = 0;
     state->m_fullBandwidthCount = 0;
+}
+
+void BbrFlavour::congControl()
+{
+    state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
+    updateModelAndState();
+    updateControlParameters();
+
+    sendData(false);
+}
+
+void BbrFlavour::processDuplicateAck()
+{
+    bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(dynamic_cast<TcpPacedConnection*>(conn)->getHighestRexmittedSeqNum());
+    if (state->dupacks == state->dupthresh || isHighRxtLost) {
+            EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
+
+            if (state->sack_enabled) {
+                if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
+                    state->recoveryPoint = state->snd_max; // HighData = snd_max
+                    //mark head as lost
+                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
+                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
+                    saveCwnd();
+                    EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
+                    state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
+                    state->m_packetConservation = true;
+                    state->lossRecovery = true;
+
+                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
+                    conn->emit(recoveryPointSignal, state->recoveryPoint);
+                }
+            }
+
+            if (state->sack_enabled) {
+                if (state->lossRecovery) {
+                    EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
+                    restartRexmitTimer();
+                }
+            }
+            EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
+            conn->emit(highRxtSignal, state->highRxt);
+    }
+    else if (state->dupacks > state->dupthresh) {
+
+        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
+
+    }
+
+    conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
+    conn->emit(cwndSignal, state->snd_cwnd);
+    conn->emit(pacingGainSignal, state->m_pacingGain);
+
+    if(state->lossRecovery){
+        conn->emit(lossRecoverySignal, state->snd_cwnd);
+    }
+
 }
 
 } // namespace tcp

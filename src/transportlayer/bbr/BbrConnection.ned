@@ -29,14 +29,6 @@ simple BbrConnection extends TcpPacedConnection
         @signal[state];
         @signal[pacingGain];
         
-        @signal[mDelivered];
-        @signal[mFirstSentTime];
-        @signal[mLastSentTime];
-        @signal[mbytesInFlight];
-        @signal[mbytesInFlightTotal];
-        @signal[mbytesLoss];
-        @signal[msendElapsed];
-        @signal[mackElapsed];
         @signal[targetCwnd];
         @signal[priorCwnd];
         @signal[estimatedBdp];
@@ -46,6 +38,8 @@ simple BbrConnection extends TcpPacedConnection
         @signal[highRxt];
         @signal[txBufferLength];
         @signal[recoveryPoint];
+        @signal[nextRoundDelivered];
+        @signal[restoreCwnd];
         
         @statistic[additiveIncrease](record=vector; interpolationmode=sample-hold);
         @statistic[minRtt](record=vector; interpolationmode=sample-hold);
@@ -61,14 +55,8 @@ simple BbrConnection extends TcpPacedConnection
         @statistic[highRxt](record=vector; interpolationmode=sample-hold);
         @statistic[txBufferLength](record=vector; interpolationmode=sample-hold);
         @statistic[recoveryPoint](record=vector; interpolationmode=sample-hold);
+        @statistic[nextRoundDelivered](record=vector; interpolationmode=sample-hold);
+        @statistic[restoreCwnd](record=vector; interpolationmode=sample-hold);
         
-        @statistic[mDelivered](record=vector; interpolationmode=sample-hold);
-		@statistic[mFirstSentTime](record=vector; interpolationmode=sample-hold);
-		@statistic[mLastSentTime](record=vector; interpolationmode=sample-hold);
-		@statistic[msendElapsed](record=vector; interpolationmode=sample-hold);
-		@statistic[mackElapsed](record=vector; interpolationmode=sample-hold);
-		@statistic[mbytesInFlight](record=vector; interpolationmode=sample-hold);
-		@statistic[mbytesInFlightTotal](record=vector; interpolationmode=sample-hold);
-		@statistic[mbytesLoss](record=vector; interpolationmode=sample-hold);
 		@statistic[estimatedBdp](record=vector; interpolationmode=sample-hold);
 }

@@ -20,6 +20,7 @@
 #include "../BbrConnection.h"
 #include "BbrFamily.h"
 #include "windowedfilter.h"
+#include "BbrFamilyState_m.h"
 
 namespace inet {
 namespace tcp {
@@ -71,6 +72,8 @@ class BbrFlavour : public BbrFamily
     static simsignal_t highRxtSignal;
     static simsignal_t recoveryPointSignal;
     static simsignal_t connMinRttSignal;
+    static simsignal_t nextRoundDeliveredSignal;
+    static simsignal_t restoreCwndSignal;
 
     simtime_t rtt;
     std::default_random_engine generator;
@@ -176,6 +179,10 @@ class BbrFlavour : public BbrFamily
 
     virtual double getFirstSentTime() { return state->firstSentTime;};
     virtual double getDeliveredTime() { return state->deliveredTime;};
+
+    virtual void congControl();
+
+    virtual void processDuplicateAck();
 
     };
 
