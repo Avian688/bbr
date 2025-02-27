@@ -16,17 +16,14 @@ struct BbrFamilyStateVariables extends TcpTahoeRenoFamilyStateVariables
 {
     @descriptor(readonly);
     
-    
-    uint32_t lastUpdateSeq;
-    
     double R; //pacing rate
     
     int rttCount = 0;
     
-    double firstSentTime; //used for send elapsed
-    double deliveredTime; //used for ack elapsed
+    double firstSentTime = 0; //used for send elapsed
+    double deliveredTime = 0; //used for ack elapsed
     long m_delivered = 0;
-    bool isAppLimited;
+    bool isAppLimited = false;
     
     uint32_t m_bandwidthWindowLength = 10;
     
