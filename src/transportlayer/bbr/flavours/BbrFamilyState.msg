@@ -25,7 +25,7 @@ struct BbrFamilyStateVariables extends TcpTahoeRenoFamilyStateVariables
     
     double firstSentTime; //used for send elapsed
     double deliveredTime; //used for ack elapsed
-    long m_delivered;
+    long m_delivered = 0;
     bool isAppLimited;
     
     uint32_t m_bandwidthWindowLength = 10;
@@ -86,9 +86,9 @@ struct BbrFamilyStateVariables extends TcpTahoeRenoFamilyStateVariables
     uint32_t m_ackEpochAckedResetThresh = 1 << 12;
     uint32_t m_ackEpochAcked = 0;
     
-    uint32_t m_segmentSize;
+    uint32_t m_segmentSize = 1448;
     
-    uint32_t prevMaxBandwidth;
+    uint32_t prevMaxBandwidth = 0;
 };
 
 cplusplus(BbrFamilyStateVariables) {{
