@@ -540,9 +540,7 @@ void BbrFlavour::enterProbeBW()
     state->m_pacingGain = 1;
     state->m_cWndGain = 2;
     boost::random::uniform_int_distribution<> dist(0, 6);
-    int val = (int)dist(gen);
-    std::cout << "\n RANDOM VAL: " << val << endl;
-    state->m_cycleIndex = GAIN_CYCLE_LENGTH - 1 - val;
+    state->m_cycleIndex = GAIN_CYCLE_LENGTH - 1 - (int)dist(gen);
     advanceCyclePhase();
 
     conn->emit(pacingGainSignal, state->m_pacingGain);
