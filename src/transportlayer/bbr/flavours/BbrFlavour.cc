@@ -539,7 +539,7 @@ void BbrFlavour::enterProbeBW()
     setBbrState(BbrMode_t::BBR_PROBE_BW);
     state->m_pacingGain = 1;
     state->m_cWndGain = 2;
-    boost::random::uniform_int_distribution<> dist(1, 6);
+    boost::random::uniform_int_distribution<> dist(0, 6);
     int val = (int)dist(gen);
     std::cout << "\n RANDOM VAL: " << val << endl;
     state->m_cycleIndex = GAIN_CYCLE_LENGTH - 1 - val;
