@@ -2,7 +2,7 @@
 # OMNeT++/OMNEST Makefile for $(LIB_PREFIX)bbr
 #
 # This file was generated with the command:
-#  opp_makemake --make-so -f --deep -KINET4_5_PROJ=../../inet4.5 -KTCPGOODPUTAPPLICATIONS_PROJ=../../tcpGoodputApplications -KTCPPACED_PROJ=../../tcpPaced -DINET_IMPORT -I$$\(INET4_5_PROJ\)/src -L$$\(INET4_5_PROJ\)/src -L$$\(TCPGOODPUTAPPLICATIONS_PROJ\)/src -L$$\(TCPPACED_PROJ\)/src -lINET$$\(D\) -ltcpGoodputApplications$$\(D\) -ltcpPaced$$\(D\)
+#  opp_makemake --make-so -f --deep -KINET4_5_PROJ=../../inet4.5 -KTCPGOODPUTAPPLICATIONS_PROJ=../../tcpGoodputApplications -KTCPPACED_PROJ=../../tcpPaced -DINET_IMPORT -I/usr/include/boost -I/usr/local/Cellar/boost/1.87.0/include/boost -I$$\(INET4_5_PROJ\)/src -L$$\(INET4_5_PROJ\)/src -L$$\(TCPGOODPUTAPPLICATIONS_PROJ\)/src -L$$\(TCPPACED_PROJ\)/src -lINET$$\(D\) -ltcpGoodputApplications$$\(D\) -ltcpPaced$$\(D\)
 #
 
 # Name of target to be created (-o option)
@@ -14,7 +14,7 @@ TARGET_IMPDEF = $(TARGET_NAME)$(IMPDEF_SUFFIX)
 TARGET_FILES = $(TARGET_DIR)/$(TARGET)
 
 # C++ include paths (with -I)
-INCLUDE_PATH = -I$(INET4_5_PROJ)/src
+INCLUDE_PATH = -I/usr/include/boost -I/usr/local/Cellar/boost/1.87.0/include/boost -I$(INET4_5_PROJ)/src
 
 # Additional object and library files to link with
 EXTRA_OBJS =

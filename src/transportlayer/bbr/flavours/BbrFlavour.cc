@@ -56,7 +56,6 @@ void BbrFlavour::established(bool active)
         state->m_minRtt = state->srtt != 0 ? state->srtt : SIMTIME_MAX;
         state->m_minRttStamp = simTime();
         state->m_initialCWnd = state->snd_cwnd;
-        generator.seed(6);
         state->m_segmentSize = state->snd_mss;
         state->m_priorCwnd = state->snd_cwnd;
         recalculateSlowStartThreshold();
@@ -540,8 +539,10 @@ void BbrFlavour::enterProbeBW()
     setBbrState(BbrMode_t::BBR_PROBE_BW);
     state->m_pacingGain = 1;
     state->m_cWndGain = 2;
-    std::uniform_int_distribution<int> distrib(0,6);
-    state->m_cycleIndex = GAIN_CYCLE_LENGTH - 1 - (int)distrib(generator);
+    boost::random::uniform_int_distribution<> dist(1, 6);
+    int val = (int)dist(gen);
+    std::cout << "\n RANDOM VAL: " << val << endl;
+    state->m_cycleIndex = GAIN_CYCLE_LENGTH - 1 - val;
     advanceCyclePhase();
 
     conn->emit(pacingGainSignal, state->m_pacingGain);

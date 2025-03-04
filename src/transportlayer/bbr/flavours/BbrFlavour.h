@@ -21,7 +21,8 @@
 #include "BbrFamily.h"
 #include "windowedfilter.h"
 #include "BbrFamilyState_m.h"
-
+#include <boost/random/uniform_int_distribution.hpp>
+#include <boost/random.hpp>
 namespace inet {
 namespace tcp {
 
@@ -76,7 +77,7 @@ class BbrFlavour : public BbrFamily
     static simsignal_t restoreCwndSignal;
 
     simtime_t rtt;
-    std::default_random_engine generator;
+    boost::random::mt19937 gen{6};
     uint32_t m_extraAcked[2] = {0, 0};
 
     BbrMode_t m_state{BbrMode_t::BBR_STARTUP};
