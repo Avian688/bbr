@@ -181,9 +181,9 @@ class BbrFlavour : public BbrFamily
     virtual double getFirstSentTime() { return state->firstSentTime;};
     virtual double getDeliveredTime() { return state->deliveredTime;};
 
-    virtual void congControl();
+    virtual void congControl() override;
 
-    virtual void processDuplicateAck();
+    virtual void processDuplicateAck() override;
 
     };
 

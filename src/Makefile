@@ -28,7 +28,13 @@ PROJECTRELATIVE_PATH = src
 O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 
 # Object files for local .cc, .msg and .sm files
-OBJS = $O/transportlayer/bbr/Bbr.o $O/transportlayer/bbr/BbrConnection.o $O/transportlayer/bbr/flavours/BbrFamily.o $O/transportlayer/bbr/flavours/BbrFlavour.o $O/transportlayer/bbr/flavours/BbrFamilyState_m.o
+OBJS = \
+    $O/transportlayer/bbr/Bbr.o \
+    $O/transportlayer/bbr/BbrConnection.o \
+    $O/transportlayer/bbr/flavours/Bbr3Flavour.o \
+    $O/transportlayer/bbr/flavours/BbrFamily.o \
+    $O/transportlayer/bbr/flavours/BbrFlavour.o \
+    $O/transportlayer/bbr/flavours/BbrFamilyState_m.o
 
 # Message files
 MSGFILES = \

@@ -101,7 +101,7 @@ void BbrFlavour::recalculateSlowStartThreshold() {
 //    uint32_t flight_size = state->snd_max - state->snd_una;
     //state->ssthresh = std::max(flight_size / 2, 2 * state->m_segmentSize);
 
-    //saveCwnd();
+    saveCwnd();
     conn->emit(ssthreshSignal, state->ssthresh);
 }
 
@@ -109,7 +109,9 @@ void BbrFlavour::processRexmitTimer(TcpEventCode &event) {
     TcpPacedFamily::processRexmitTimer(event);
 
     saveCwnd();
+
     state->m_roundStart = true;
+    state->m_fullBandwidth = 0;
     state->snd_cwnd = state->snd_mss*4;
     conn->emit(cwndSignal, state->snd_cwnd);
 
@@ -158,101 +160,101 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
 
 void BbrFlavour::receivedDuplicateAck() {
     //dynamic_cast<BbrConnection*>(conn)->updateInFlight();
-    bool isHighRxtLost = dynamic_cast<BbrConnection*>(conn)->checkIsLost(dynamic_cast<TcpPacedConnection*>(conn)->getHighestRexmittedSeqNum());
-    if (state->dupacks == state->dupthresh || isHighRxtLost) {
-            EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
-
-            if (state->sack_enabled) {
-                // RFC 3517, page 6: "When a TCP sender receives the duplicate ACK corresponding to
-                // DupThresh ACKs, the scoreboard MUST be updated with the new SACK
-                // information (via Update ()).  If no previous loss event has occurred
-                // on the connection or the cumulative acknowledgment point is beyond
-                // the last value of RecoveryPoint, a loss recovery phase SHOULD be
-                // initiated, per the fast retransmit algorithm outlined in [RFC2581].
-                // The following steps MUST be taken:
-                //
-                // (1) RecoveryPoint = HighData
-                //
-                // When the TCP sender receives a cumulative ACK for this data octet
-                // the loss recovery phase is terminated."
-
-                // RFC 3517, page 8: "If an RTO occurs during loss recovery as specified in this document,
-                // RecoveryPoint MUST be set to HighData.  Further, the new value of
-                // RecoveryPoint MUST be preserved and the loss recovery algorithm
-                // outlined in this document MUST be terminated.  In addition, a new
-                // recovery phase (as described in section 5) MUST NOT be initiated
-                // until HighACK is greater than or equal to the new value of
-                // RecoveryPoint."
-                if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
-                    state->recoveryPoint = state->snd_max; // HighData = snd_max
-                    //mark head as lost
-                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
-                    saveCwnd();
-                    EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
-                    state->snd_cwnd = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
-                    state->m_packetConservation = true;
-                    state->lossRecovery = true;
-
-                    //saveCwnd();
-                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
-                    conn->emit(recoveryPointSignal, state->recoveryPoint);
-                }
-            }
-
-            //state->snd_cwnd = state->ssthresh;
-
-            sendData(false);
-
-            if (state->sack_enabled) {
-                if (state->lossRecovery) {
-                    EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
-                    restartRexmitTimer();
-                }
-            }
-            EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
-            conn->emit(highRxtSignal, state->highRxt);
-    }
-    else if (state->dupacks > state->dupthresh) {
-        //
-        // Reno: For each additional duplicate ACK received, increment cwnd by SMSS.
-        // This artificially inflates the congestion window in order to reflect the
-        // additional segment that has left the network
-        //
-        //state->snd_cwnd += state->snd_mss;
-
-        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
-
-        // Note: Steps (A) - (C) of RFC 3517, page 7 ("Once a TCP is in the loss recovery phase the following procedure MUST be used for each arriving ACK")
-        // should not be used here!
-
-        // RFC 3517, pages 7 and 8: "5.1 Retransmission Timeouts
-        // (...)
-        //  If there are segments missing from the receiver's buffer following
-        // processing of the retransmitted segment, the corresponding ACK will
-        // contain SACK information.  In this case, a TCP sender SHOULD use this
-        // SACK information when determining what data should be sent in each
-        // segment of the slow start.  The exact algorithm for this selection is
-        // not specified in this document (specifically NextSeg () is
-        // inappropriate during slow start after an RTO).  A relatively
-        // straightforward approach to "filling in" the sequence space reported
-        // as missing should be a reasonable approach."
-
-    }
-
-    state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
-    updateModelAndState();
-    updateControlParameters();
-
-    sendData(false);
-
-    conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
-    conn->emit(cwndSignal, state->snd_cwnd);
-    conn->emit(pacingGainSignal, state->m_pacingGain);
-
-    if(state->lossRecovery){
-        conn->emit(lossRecoverySignal, state->snd_cwnd);
-    }
+//    bool isHighRxtLost = dynamic_cast<BbrConnection*>(conn)->checkIsLost(dynamic_cast<TcpPacedConnection*>(conn)->getHighestRexmittedSeqNum());
+//    if (state->dupacks == state->dupthresh || isHighRxtLost) {
+//            EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
+//
+//            if (state->sack_enabled) {
+//                // RFC 3517, page 6: "When a TCP sender receives the duplicate ACK corresponding to
+//                // DupThresh ACKs, the scoreboard MUST be updated with the new SACK
+//                // information (via Update ()).  If no previous loss event has occurred
+//                // on the connection or the cumulative acknowledgment point is beyond
+//                // the last value of RecoveryPoint, a loss recovery phase SHOULD be
+//                // initiated, per the fast retransmit algorithm outlined in [RFC2581].
+//                // The following steps MUST be taken:
+//                //
+//                // (1) RecoveryPoint = HighData
+//                //
+//                // When the TCP sender receives a cumulative ACK for this data octet
+//                // the loss recovery phase is terminated."
+//
+//                // RFC 3517, page 8: "If an RTO occurs during loss recovery as specified in this document,
+//                // RecoveryPoint MUST be set to HighData.  Further, the new value of
+//                // RecoveryPoint MUST be preserved and the loss recovery algorithm
+//                // outlined in this document MUST be terminated.  In addition, a new
+//                // recovery phase (as described in section 5) MUST NOT be initiated
+//                // until HighACK is greater than or equal to the new value of
+//                // RecoveryPoint."
+//                if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
+//                    state->recoveryPoint = state->snd_max; // HighData = snd_max
+//                    //mark head as lost
+//                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
+//                    saveCwnd();
+//                    EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
+//                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
+//                    state->snd_cwnd = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
+//                    state->m_packetConservation = true;
+//                    state->lossRecovery = true;
+//
+//                    //saveCwnd();
+//                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
+//                    conn->emit(recoveryPointSignal, state->recoveryPoint);
+//                }
+//            }
+//
+//            //state->snd_cwnd = state->ssthresh;
+//
+//            sendData(false);
+//
+//            if (state->sack_enabled) {
+//                if (state->lossRecovery) {
+//                    EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
+//                    restartRexmitTimer();
+//                }
+//            }
+//            EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
+//            conn->emit(highRxtSignal, state->highRxt);
+//    }
+//    else if (state->dupacks > state->dupthresh) {
+//        //
+//        // Reno: For each additional duplicate ACK received, increment cwnd by SMSS.
+//        // This artificially inflates the congestion window in order to reflect the
+//        // additional segment that has left the network
+//        //
+//        //state->snd_cwnd += state->snd_mss;
+//
+//        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
+//
+//        // Note: Steps (A) - (C) of RFC 3517, page 7 ("Once a TCP is in the loss recovery phase the following procedure MUST be used for each arriving ACK")
+//        // should not be used here!
+//
+//        // RFC 3517, pages 7 and 8: "5.1 Retransmission Timeouts
+//        // (...)
+//        //  If there are segments missing from the receiver's buffer following
+//        // processing of the retransmitted segment, the corresponding ACK will
+//        // contain SACK information.  In this case, a TCP sender SHOULD use this
+//        // SACK information when determining what data should be sent in each
+//        // segment of the slow start.  The exact algorithm for this selection is
+//        // not specified in this document (specifically NextSeg () is
+//        // inappropriate during slow start after an RTO).  A relatively
+//        // straightforward approach to "filling in" the sequence space reported
+//        // as missing should be a reasonable approach."
+//
+//    }
+//
+//    state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
+//    updateModelAndState();
+//    updateControlParameters();
+//
+//    sendData(false);
+//
+//    conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
+//    conn->emit(cwndSignal, state->snd_cwnd);
+//    conn->emit(pacingGainSignal, state->m_pacingGain);
+//
+//    if(state->lossRecovery){
+//        conn->emit(lossRecoverySignal, state->snd_cwnd);
+//    }
 
 }
 
@@ -432,7 +434,7 @@ void BbrFlavour::checkDrain()
 void BbrFlavour::updateRTprop()
 {
     state->m_minRttExpired = simTime() > (state->m_minRttStamp + state->m_minRttFilterLen);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_minRtt || state->m_minRttExpired))
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_minRtt || state->m_minRttExpired))
     {
         state->m_minRtt = state->m_lastRtt;
         state->m_minRttStamp = simTime();
@@ -756,7 +758,7 @@ uint32_t BbrFlavour::ackAggregationCwnd()
 
     if (state->m_extraAckedGain && state->m_isPipeFilled)
     {
-        maxAggrBytes = m_maxBwFilter.GetBest() / 10;
+        maxAggrBytes = m_maxBwFilter.GetBest() * 0.1;
         aggrCwndBytes = state->m_extraAckedGain * std::max(m_extraAcked[0], m_extraAcked[1]);
         aggrCwndBytes = std::min(aggrCwndBytes, maxAggrBytes);
     }
@@ -788,12 +790,12 @@ void BbrFlavour::congControl()
 
 void BbrFlavour::processDuplicateAck()
 {
-    bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(dynamic_cast<TcpPacedConnection*>(conn)->getHighestRexmittedSeqNum());
+    bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(state->snd_una+state->snd_mss);
     if (state->dupacks == state->dupthresh || isHighRxtLost) {
             EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
-                if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
+                if ((state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) && !state->lossRecovery) { // HighACK = snd_una
                     state->recoveryPoint = state->snd_max; // HighData = snd_max
                     //mark head as lost
                     dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
@@ -802,6 +804,7 @@ void BbrFlavour::processDuplicateAck()
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
                     state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
                     state->m_packetConservation = true;
+                    state->m_nextRoundDelivered = dynamic_cast<BbrConnection*>(conn)->getDelivered();
                     state->lossRecovery = true;
 
                     dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
@@ -812,7 +815,7 @@ void BbrFlavour::processDuplicateAck()
             if (state->sack_enabled) {
                 if (state->lossRecovery) {
                     EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
-                    restartRexmitTimer();
+                    //restartRexmitTimer();
                 }
             }
             EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";

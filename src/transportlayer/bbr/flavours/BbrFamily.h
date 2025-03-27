@@ -35,6 +35,10 @@ class BbrFamily : public TcpPacedFamily
 
     virtual void receivedDataAck(uint32_t firstSeqAcked) override;
 
+    virtual void congControl();
+
+    virtual void processDuplicateAck();
+
     /** Redefine what should happen when dupAck was received, to add congestion window management */
     virtual void receivedDuplicateAck() override;
 
