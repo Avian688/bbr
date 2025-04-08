@@ -122,7 +122,6 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             // could have been changed if faulty data receiver is not respecting the "do not shrink window" rule
 
             updateWndInfo(tcpHeader);
-            dynamic_cast<BbrFamily*>(tcpAlgorithm)->processDuplicateAck();
 
             if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
                 skbDelivered(tcpHeader->getAckNo());
@@ -138,8 +137,7 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 ////
             updateSample(currentDelivered, lost, false, priorInFlight, connMinRtt);
 
-            //tcpAlgorithm->receivedDuplicateAck();
-            dynamic_cast<BbrFamily*>(tcpAlgorithm)->congControl();
+            tcpAlgorithm->receivedDuplicateAck();
 
             sendPendingData();
         }

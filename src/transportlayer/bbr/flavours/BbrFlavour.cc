@@ -107,41 +107,41 @@ void BbrFlavour::recalculateSlowStartThreshold() {
 
 void BbrFlavour::processRexmitTimer(TcpEventCode &event) {
     TcpPacedFamily::processRexmitTimer(event);
-
     saveCwnd();
-
     state->m_roundStart = true;
     state->m_fullBandwidth = 0;
     state->snd_cwnd = state->snd_mss*4;
     conn->emit(cwndSignal, state->snd_cwnd);
 
-    EV_INFO << "Begin Slow Start: resetting cwnd to " << state->snd_cwnd
-                   << ", ssthresh=" << state->ssthresh << "\n";
+    EV_INFO << " Rexmit Timeout! Recovery point: " << state->recoveryPoint << ", cwnd: "<< state->snd_cwnd << "\n";
 
     state->afterRto = true;
+    tcp_state = CA_LOSS;
     dynamic_cast<TcpPacedConnection*>(conn)->cancelPaceTimer();
-
-    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(true);
     sendData(false);
 }
 
 void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
 {
     TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
-
+    EV_INFO << "receivedDataAck: firstSeqAcked" << firstSeqAcked << "\n";
     //dynamic_cast<BbrConnection*>(conn)->updateInFlight();
     // Check if recovery phase has ended
     if (state->lossRecovery && state->sack_enabled) {
-
         if (seqGE(state->snd_una, state->recoveryPoint)) {
-            EV_INFO << "Loss Recovery terminated.\n";
-            state->lossRecovery = false;
+            EV_INFO   << " Loss Recovery terminated.\n";
             state->m_packetConservation = false;
-            state->snd_cwnd = state->ssthresh;
+            tcp_state = CA_OPEN;
             restoreCwnd();
+            state->lossRecovery = false;
+            std::cout << "\n LOSS RECOVERY TERMINATED AT " << simTime() << endl;
+            state->snd_cwnd = state->ssthresh;
             conn->emit(lossRecoverySignal, 0);
+            EV_INFO << "lossRecovery = false, m_packetConservation = false, state->snd_cwnd = " << state->snd_cwnd << "\n";
         }
         else{
+            std::cout << "\n DOING IMMEDIATE DATA RETRANSMIT AT " << simTime() << endl;
+            dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
             conn->emit(lossRecoverySignal, state->snd_cwnd);
         }
     }
@@ -155,107 +155,6 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
     conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
     conn->emit(cwndSignal, state->snd_cwnd);
     conn->emit(pacingGainSignal, state->m_pacingGain);
-}
-
-
-void BbrFlavour::receivedDuplicateAck() {
-    //dynamic_cast<BbrConnection*>(conn)->updateInFlight();
-//    bool isHighRxtLost = dynamic_cast<BbrConnection*>(conn)->checkIsLost(dynamic_cast<TcpPacedConnection*>(conn)->getHighestRexmittedSeqNum());
-//    if (state->dupacks == state->dupthresh || isHighRxtLost) {
-//            EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
-//
-//            if (state->sack_enabled) {
-//                // RFC 3517, page 6: "When a TCP sender receives the duplicate ACK corresponding to
-//                // DupThresh ACKs, the scoreboard MUST be updated with the new SACK
-//                // information (via Update ()).  If no previous loss event has occurred
-//                // on the connection or the cumulative acknowledgment point is beyond
-//                // the last value of RecoveryPoint, a loss recovery phase SHOULD be
-//                // initiated, per the fast retransmit algorithm outlined in [RFC2581].
-//                // The following steps MUST be taken:
-//                //
-//                // (1) RecoveryPoint = HighData
-//                //
-//                // When the TCP sender receives a cumulative ACK for this data octet
-//                // the loss recovery phase is terminated."
-//
-//                // RFC 3517, page 8: "If an RTO occurs during loss recovery as specified in this document,
-//                // RecoveryPoint MUST be set to HighData.  Further, the new value of
-//                // RecoveryPoint MUST be preserved and the loss recovery algorithm
-//                // outlined in this document MUST be terminated.  In addition, a new
-//                // recovery phase (as described in section 5) MUST NOT be initiated
-//                // until HighACK is greater than or equal to the new value of
-//                // RecoveryPoint."
-//                if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
-//                    state->recoveryPoint = state->snd_max; // HighData = snd_max
-//                    //mark head as lost
-//                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
-//                    saveCwnd();
-//                    EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-//                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
-//                    state->snd_cwnd = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
-//                    state->m_packetConservation = true;
-//                    state->lossRecovery = true;
-//
-//                    //saveCwnd();
-//                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
-//                    conn->emit(recoveryPointSignal, state->recoveryPoint);
-//                }
-//            }
-//
-//            //state->snd_cwnd = state->ssthresh;
-//
-//            sendData(false);
-//
-//            if (state->sack_enabled) {
-//                if (state->lossRecovery) {
-//                    EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
-//                    restartRexmitTimer();
-//                }
-//            }
-//            EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
-//            conn->emit(highRxtSignal, state->highRxt);
-//    }
-//    else if (state->dupacks > state->dupthresh) {
-//        //
-//        // Reno: For each additional duplicate ACK received, increment cwnd by SMSS.
-//        // This artificially inflates the congestion window in order to reflect the
-//        // additional segment that has left the network
-//        //
-//        //state->snd_cwnd += state->snd_mss;
-//
-//        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
-//
-//        // Note: Steps (A) - (C) of RFC 3517, page 7 ("Once a TCP is in the loss recovery phase the following procedure MUST be used for each arriving ACK")
-//        // should not be used here!
-//
-//        // RFC 3517, pages 7 and 8: "5.1 Retransmission Timeouts
-//        // (...)
-//        //  If there are segments missing from the receiver's buffer following
-//        // processing of the retransmitted segment, the corresponding ACK will
-//        // contain SACK information.  In this case, a TCP sender SHOULD use this
-//        // SACK information when determining what data should be sent in each
-//        // segment of the slow start.  The exact algorithm for this selection is
-//        // not specified in this document (specifically NextSeg () is
-//        // inappropriate during slow start after an RTO).  A relatively
-//        // straightforward approach to "filling in" the sequence space reported
-//        // as missing should be a reasonable approach."
-//
-//    }
-//
-//    state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
-//    updateModelAndState();
-//    updateControlParameters();
-//
-//    sendData(false);
-//
-//    conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
-//    conn->emit(cwndSignal, state->snd_cwnd);
-//    conn->emit(pacingGainSignal, state->m_pacingGain);
-//
-//    if(state->lossRecovery){
-//        conn->emit(lossRecoverySignal, state->snd_cwnd);
-//    }
-
 }
 
 void BbrFlavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
@@ -401,17 +300,17 @@ void BbrFlavour::checkFullPipe()
     }
 
     /* Check if Bottleneck bandwidth is still growing*/
-    if (m_maxBwFilter.GetBest() >= (state->m_fullBandwidth * 1.25)) //CHECK THIS VALUE - IS DATA TYPE OK
+    if (m_maxBwFilter.GetBest() >= ((uint32_t)(state->m_fullBandwidth * 1.25)))
     {
         state->m_fullBandwidth = m_maxBwFilter.GetBest();
         state->m_fullBandwidthCount = 0;
         return;
     }
-
     state->m_fullBandwidthCount++;
     if (state->m_fullBandwidthCount >= 3)
     {
         state->m_isPipeFilled = true;
+        EV_INFO   << " Pipe is filled. state->m_isPipeFilled = true m_fullBandwidth" << state->m_fullBandwidth << "\n";
     }
 }
 
@@ -434,7 +333,7 @@ void BbrFlavour::checkDrain()
 void BbrFlavour::updateRTprop()
 {
     state->m_minRttExpired = simTime() > (state->m_minRttStamp + state->m_minRttFilterLen);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_minRtt || state->m_minRttExpired))
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_minRtt || state->m_minRttExpired))
     {
         state->m_minRtt = state->m_lastRtt;
         state->m_minRttStamp = simTime();
@@ -534,6 +433,8 @@ void BbrFlavour::enterDrain()
     setBbrState(BbrMode_t::BBR_DRAIN);
     state->m_pacingGain = (double) 1.0 / state->m_highGain;
     state->m_cWndGain = state->m_highGain;
+
+    EV_INFO   << " Entering Drain.  m_pacingGain = " << state->m_pacingGain << "m_cWndGain = " << state->m_highGain << "\n";
 }
 
 void BbrFlavour::enterProbeBW()
@@ -543,6 +444,9 @@ void BbrFlavour::enterProbeBW()
     state->m_cWndGain = 2;
     boost::random::uniform_int_distribution<> dist(0, 6);
     state->m_cycleIndex = GAIN_CYCLE_LENGTH - 1 - (int)dist(gen);
+
+    EV_INFO   << " Entering ProbeBW.  m_pacingGain = " << state->m_pacingGain << "m_cWndGain = " << state->m_highGain << "\n";
+
     advanceCyclePhase();
 
     conn->emit(pacingGainSignal, state->m_pacingGain);
@@ -551,6 +455,7 @@ void BbrFlavour::enterProbeBW()
 void BbrFlavour::setBbrState(BbrMode_t mode)
 {
     m_state = mode;
+    EV_INFO   << " Setting BBR State: " << m_state << "\n";
     conn->emit(stateSignal, m_state);
 }
 
@@ -559,6 +464,8 @@ void BbrFlavour::enterProbeRTT()
     setBbrState(BbrMode_t::BBR_PROBE_RTT);
     state->m_pacingGain = 1;
     state->m_cWndGain = 1;
+
+    EV_INFO   << " Entering ProbeRTT.  m_pacingGain = " << state->m_pacingGain << "m_cWndGain = " << state->m_highGain << "\n";
 
     conn->emit(pacingGainSignal, state->m_pacingGain);
 }
@@ -582,6 +489,7 @@ void BbrFlavour::handleProbeRTT()
         if (state->m_roundStart)
         {
             state->m_probeRttRoundDone = true;
+
         }
         if (state->m_probeRttRoundDone && simTime() > state->m_probeRttDoneStamp)
         {
@@ -602,12 +510,15 @@ void BbrFlavour::saveCwnd()
     {
         state->m_priorCwnd = std::max(state->m_priorCwnd, state->snd_cwnd);
     }
+
+    EV_INFO << " SaveCwnd.  snd_cwnd = " << state->snd_cwnd << "m_priorCwnd = " << state->m_priorCwnd << "\n";
     conn->emit(priorCwndSignal, state->m_priorCwnd);
 }
 
 void BbrFlavour::restoreCwnd()
 {
     state->snd_cwnd = std::max(state->m_priorCwnd, state->snd_cwnd);
+    EV_INFO << " RestoreCwnd.  snd_cwnd = " << state->snd_cwnd << "\n";
     conn->emit(restoreCwndSignal, state->snd_cwnd);
 }
 
@@ -615,10 +526,12 @@ void BbrFlavour::exitProbeRTT()
 {
     if (state->m_isPipeFilled)
     {
+        EV_INFO << " Exiting ProbeRTT. m_isPipeFilled = true\n";
         enterProbeBW();
     }
     else
     {
+        EV_INFO << " Exiting ProbeRTT. m_isPipeFilled = false. Entering Startup.\n";
         enterStartup();
     }
 }
@@ -629,6 +542,8 @@ void BbrFlavour::enterStartup()
     state->m_pacingGain = state->m_highGain;
     state->m_cWndGain = state->m_highGain;
 
+    EV_INFO << " Entering Startup.  m_pacingGain = " << state->m_pacingGain << "m_cWndGain = " << state->m_highGain << "\n";
+
     conn->emit(pacingGainSignal, state->m_pacingGain);
 }
 
@@ -638,7 +553,6 @@ void BbrFlavour::setPacingRate(double gain)
     rate *= (1.f - state->m_pacingMargin);
     uint32_t maxRate = 500000000; // 4Gbps
     rate = std::min(rate, maxRate);
-
     if (!state->m_hasSeenRtt && dynamic_cast<BbrConnection*>(conn)->getMinRtt() != SIMTIME_MAX)
     {
         initPacingRate();
@@ -649,6 +563,7 @@ void BbrFlavour::setPacingRate(double gain)
     if ((state->m_isPipeFilled || pace < dynamic_cast<BbrConnection*>(conn)->getPacingRate().dbl()) && rate > 0)
     {
         dynamic_cast<BbrConnection*>(conn)->changeIntersendingTime(pace);
+        EV_INFO << " Setting pacing rate = " << pace << "\n";
     }
 }
 
@@ -683,6 +598,7 @@ void BbrFlavour::setCwnd()
         state->snd_cwnd  = state->snd_cwnd  + rs.m_ackedSacked;
     }
     state->snd_cwnd  = std::max(state->snd_cwnd , state->m_minPipeCwnd);
+    EV_INFO << " Setting CWND to = " << state->snd_cwnd << "\n";
 done:
     modulateCwndForProbeRTT();
 }
@@ -693,11 +609,13 @@ bool BbrFlavour::modulateCwndForRecovery()
     if (rs.m_bytesLoss > 0)
     {
        state->snd_cwnd = std::max((int)state->snd_cwnd  - (int)rs.m_bytesLoss, (int)state->m_segmentSize);
+       EV_INFO << "modulateCwndForRecovery.  rs.m_bytesLoss > 0 Setting cwnd to: " <<  state->snd_cwnd << "\n";
     }
 
     if (state->m_packetConservation)
     {
        state->snd_cwnd = std::max(state->snd_cwnd , dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + rs.m_ackedSacked);
+       EV_INFO << "modulateCwndForRecovery.  state->m_packetConservation = true. Setting cwnd to: " <<  state->snd_cwnd << "\n";
        //think its here
        return true;
     }
@@ -709,6 +627,7 @@ void BbrFlavour::modulateCwndForProbeRTT()
     if (m_state == BbrMode_t::BBR_PROBE_RTT)
     {
         state->snd_cwnd = std::min(state->snd_cwnd, state->m_minPipeCwnd);
+        EV_INFO << "modulateCwndForProbeRTT. Setting cwnd to: " <<  state->snd_cwnd << "\n";
     }
 }
 
@@ -747,7 +666,9 @@ void BbrFlavour::initPacingRate()
 
 void BbrFlavour::updateTargetCwnd()
 {
-    state->m_targetCWnd = inFlight(state->m_cWndGain) + ackAggregationCwnd();
+    state->m_targetCWnd = inFlight(state->m_cWndGain);// + ackAggregationCwnd();
+
+    EV_INFO << "updateTargetCwnd to " << state->m_targetCWnd << "\n";
     conn->emit(targetCwndSignal, state->m_targetCWnd);
 }
 
@@ -779,43 +700,40 @@ void BbrFlavour::initFullPipe()
     state->m_fullBandwidthCount = 0;
 }
 
-void BbrFlavour::congControl()
-{
-    state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
-    updateModelAndState();
-    updateControlParameters();
-
-    sendData(false);
-}
-
-void BbrFlavour::processDuplicateAck()
+void BbrFlavour::receivedDuplicateAck()
 {
     bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(state->snd_una+state->snd_mss);
-    if (state->dupacks == state->dupthresh || isHighRxtLost) {
-            EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
+    EV_INFO << "dupAck received. Total DupAcks: " << state->dupacks << "\n";
+    //bool isHighRxtLost = false;
+    if (state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
+            EV_INFO << "dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
-                if ((state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) && !state->lossRecovery) { // HighACK = snd_una
-                    state->recoveryPoint = state->snd_max; // HighData = snd_max
+                if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
                     //mark head as lost
+                    state->recoveryPoint = state->snd_max; // HighData = snd_max
+                    state->lossRecovery = true;
+                    conn->emit(recoveryPointSignal, state->recoveryPoint);
+
                     dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
+                    //state->snd_cwnd = state->ssthresh;
                     saveCwnd();
+                    tcp_state = CA_RECOVERY;
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
+                    //state->snd_cwnd = state->ssthresh;
                     state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
                     state->m_packetConservation = true;
-                    state->m_nextRoundDelivered = dynamic_cast<BbrConnection*>(conn)->getDelivered();
-                    state->lossRecovery = true;
-
-                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
-                    conn->emit(recoveryPointSignal, state->recoveryPoint);
+                    //state->m_nextRoundDelivered = dynamic_cast<BbrConnection*>(conn)->getDelivered();
+                    std::cout << "\n DOING IMMEDIATE RETRANSMIT AT " << simTime() << endl;
+                    dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
                 }
             }
 
             if (state->sack_enabled) {
                 if (state->lossRecovery) {
                     EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
-                    //restartRexmitTimer();
+                    restartRexmitTimer();
                 }
             }
             EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
@@ -823,9 +741,15 @@ void BbrFlavour::processDuplicateAck()
     }
     else if (state->dupacks > state->dupthresh) {
 
-        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
+        EV_INFO << "dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
 
     }
+
+    state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
+    updateModelAndState();
+    updateControlParameters();
+
+    sendData(false);
 
     conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
     conn->emit(cwndSignal, state->snd_cwnd);

@@ -48,13 +48,5 @@ void BbrFamily::receivedDuplicateAck() {
     TcpPacedFamily::receivedDuplicateAck();
 }
 
-void BbrFamily::congControl() {
-
-}
-
-void BbrFamily::processDuplicateAck() {
-
-}
-
 } // namespace tcp
 } // namespace inet

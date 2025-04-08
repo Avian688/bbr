@@ -174,8 +174,6 @@ void Bbr3Flavour::processRexmitTimer(TcpEventCode &event) {
     tcp_state = CA_LOSS;
     std::cout << "\n LOSS" << endl;
     dynamic_cast<TcpPacedConnection*>(conn)->cancelPaceTimer();
-
-    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(true);
     sendData(false);
 }
 
@@ -204,6 +202,7 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
             //std::cout << "\n STATE: " << tcp_state << " at " << simTime() << endl;
         }
         else{
+            dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
             conn->emit(lossRecoverySignal, state->snd_cwnd);
         }
     }
@@ -215,105 +214,6 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
     conn->emit(maxBandwidthFilterSignal, bbr_max_bw());
     conn->emit(cwndSignal, state->snd_cwnd);
     conn->emit(pacingGainSignal, state->m_pacingGain);
-}
-
-
-void Bbr3Flavour::receivedDuplicateAck() {
-//    //dynamic_cast<BbrConnection*>(conn)->updateInFlight();
-//    bool isHighRxtLost = dynamic_cast<BbrConnection*>(conn)->checkIsLost(dynamic_cast<TcpPacedConnection*>(conn)->getHighestRexmittedSeqNum());
-//    if (state->dupacks == state->dupthresh || isHighRxtLost) {
-//            EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
-//
-//            if (state->sack_enabled) {
-//                // RFC 3517, page 6: "When a TCP sender receives the duplicate ACK corresponding to
-//                // DupThresh ACKs, the scoreboard MUST be updated with the new SACK
-//                // information (via Update ()).  If no previous loss event has occurred
-//                // on the connection or the cumulative acknowledgment point is beyond
-//                // the last value of RecoveryPoint, a loss recovery phase SHOULD be
-//                // initiated, per the fast retransmit algorithm outlined in [RFC2581].
-//                // The following steps MUST be taken:
-//                //
-//                // (1) RecoveryPoint = HighData
-//                //
-//                // When the TCP sender receives a cumulative ACK for this data octet
-//                // the loss recovery phase is terminated."
-//
-//                // RFC 3517, page 8: "If an RTO occurs during loss recovery as specified in this document,
-//                // RecoveryPoint MUST be set to HighData.  Further, the new value of
-//                // RecoveryPoint MUST be preserved and the loss recovery algorithm
-//                // outlined in this document MUST be terminated.  In addition, a new
-//                // recovery phase (as described in section 5) MUST NOT be initiated
-//                // until HighACK is greater than or equal to the new value of
-//                // RecoveryPoint."
-//                if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
-//                    state->recoveryPoint = state->snd_max; // HighData = snd_max
-//                    //mark head as lost
-//                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
-//                    //bbr_save_cwnd();
-//                    EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-//                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
-//                    //state->snd_cwnd = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
-//                    //state->m_packetConservation = true;
-//                    state->lossRecovery = true;
-//
-//                    //saveCwnd();
-//                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
-//                    conn->emit(recoveryPointSignal, state->recoveryPoint);
-//                }
-//            }
-//
-//            //state->snd_cwnd = state->ssthresh;
-//
-//            sendData(false);
-//
-//            if (state->sack_enabled) {
-//                if (state->lossRecovery) {
-//                    EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
-//                    restartRexmitTimer();
-//                }
-//            }
-//            EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
-//            conn->emit(highRxtSignal, state->highRxt);
-//    }
-//    else if (state->dupacks > state->dupthresh) {
-//        //
-//        // Reno: For each additional duplicate ACK received, increment cwnd by SMSS.
-//        // This artificially inflates the congestion window in order to reflect the
-//        // additional segment that has left the network
-//        //
-//        //state->snd_cwnd += state->snd_mss;
-//
-//        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
-//
-//        // Note: Steps (A) - (C) of RFC 3517, page 7 ("Once a TCP is in the loss recovery phase the following procedure MUST be used for each arriving ACK")
-//        // should not be used here!
-//
-//        // RFC 3517, pages 7 and 8: "5.1 Retransmission Timeouts
-//        // (...)
-//        //  If there are segments missing from the receiver's buffer following
-//        // processing of the retransmitted segment, the corresponding ACK will
-//        // contain SACK information.  In this case, a TCP sender SHOULD use this
-//        // SACK information when determining what data should be sent in each
-//        // segment of the slow start.  The exact algorithm for this selection is
-//        // not specified in this document (specifically NextSeg () is
-//        // inappropriate during slow start after an RTO).  A relatively
-//        // straightforward approach to "filling in" the sequence space reported
-//        // as missing should be a reasonable approach."
-//
-//    }
-//
-//    bbr_main();
-//
-//    sendData(false);
-//
-//    //conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
-//    conn->emit(cwndSignal, state->snd_cwnd);
-//    conn->emit(pacingGainSignal, state->m_pacingGain);
-//
-//    if(state->lossRecovery){
-//        conn->emit(lossRecoverySignal, state->snd_cwnd);
-//    }
-
 }
 
 void Bbr3Flavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
@@ -365,14 +265,7 @@ void Bbr3Flavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
     conn->emit(connMinRttSignal, dynamic_cast<BbrConnection*>(conn)->getMinRtt());
 }
 
-
-void Bbr3Flavour::congControl()
-{
-    //bbr_main();
-    //sendData(false);
-}
-
-void Bbr3Flavour::processDuplicateAck()
+void Bbr3Flavour::receivedDuplicateAck()
 {
     bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(state->snd_una+state->snd_mss);
 //    if(isHighRxtLost){
@@ -404,7 +297,7 @@ void Bbr3Flavour::processDuplicateAck()
                     }
 
                     //std::cout << "\n STATE: " << tcp_state << " at " << simTime() << endl;
-                    dynamic_cast<TcpPacedConnection*>(conn)->retransmitNext(false);
+                    dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
                 }
             }

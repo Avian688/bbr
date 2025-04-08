@@ -287,10 +287,6 @@ class Bbr3Flavour : public BbrFamily
     virtual double getFirstSentTime() { return state->firstSentTime;};
     virtual double getDeliveredTime() { return state->deliveredTime;};
 
-    virtual void congControl() override;
-
-    virtual void processDuplicateAck() override;
-
     };
 
 } // namespace tcp

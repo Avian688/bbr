@@ -50,6 +50,13 @@ class BbrFlavour : public BbrFamily
         BBR_PROBE_RTT, /**< Cut inflight to min to probe min_rtt */
     };
 
+    enum BbrState
+       {
+           CA_OPEN,
+           CA_LOSS,
+           CA_RECOVERY,
+       };
+
     typedef WindowedFilter<uint32_t,
                                MaxFilter<uint32_t>,
                                uint32_t,
@@ -81,6 +88,7 @@ class BbrFlavour : public BbrFamily
     uint32_t m_extraAcked[2] = {0, 0};
 
     BbrMode_t m_state{BbrMode_t::BBR_STARTUP};
+    BbrState tcp_state = BbrState::CA_OPEN;
     MaxBandwidthFilter_t m_maxBwFilter;
 
     bool initPackets;
@@ -180,10 +188,6 @@ class BbrFlavour : public BbrFamily
 
     virtual double getFirstSentTime() { return state->firstSentTime;};
     virtual double getDeliveredTime() { return state->deliveredTime;};
-
-    virtual void congControl() override;
-
-    virtual void processDuplicateAck() override;
 
     };
 
