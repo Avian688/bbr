@@ -162,7 +162,7 @@ void Bbr3Flavour::processRexmitTimer(TcpEventCode &event) {
     bbr_reset_full_bw();
     if (bbr_is_probing_bandwidth() && m_inflightLo == std::numeric_limits<uint32_t>::max ())
     {
-      m_inflightLo = state->m_priorCwnd;
+      m_inflightLo = std::max(state->snd_cwnd, state->m_priorCwnd);
     }
     state->snd_cwnd = state->snd_mss*4;
     conn->emit(cwndSignal, state->snd_cwnd);
@@ -191,7 +191,7 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
             EV_INFO << "Loss Recovery terminated.\n";
             state->lossRecovery = false;
             state->m_packetConservation = false;
-            //state->snd_cwnd = state->ssthresh;
+            state->snd_cwnd = state->ssthresh;
             //restoreCwnd();
             conn->emit(lossRecoverySignal, 0);
             if(tcp_state == CA_LOSS){
@@ -272,7 +272,8 @@ void Bbr3Flavour::receivedDuplicateAck()
 //        std::cout << "\n TRUE!! TEST WORKED" << endl;
 //    }
     //bool isHighRxtLost = false;
-    if (state->dupacks == state->dupthresh || isHighRxtLost) {
+    bool rackLoss = dynamic_cast<TcpPacedConnection*>(conn)->checkRackLoss();
+    if ((rackLoss && !state->lossRecovery) || state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
             EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
@@ -281,15 +282,15 @@ void Bbr3Flavour::receivedDuplicateAck()
                     //mark head as lost
                     dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
-                    bbr_save_cwnd();
+                    //bbr_save_cwnd();
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
                     //state->snd_cwnd = state->ssthresh;
                     //state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
                     //state->m_packetConservation = true;
                     state->lossRecovery = true;
-                    if(tcp_state == CA_LOSS){
-                        bbr_exit_loss_recovery();
-                    }
+//                    if(tcp_state == CA_LOSS){
+//                        bbr_exit_loss_recovery();
+//                    }
                     //bbr_exit_loss_recovery();
                     //bbr_exit_loss_recovery();
                     if(tcp_state != CA_LOSS){
@@ -305,7 +306,7 @@ void Bbr3Flavour::receivedDuplicateAck()
             if (state->sack_enabled) {
                 if (state->lossRecovery) {
                     EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
-                    //restartRexmitTimer();
+                    restartRexmitTimer();
                 }
             }
             EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
@@ -1135,7 +1136,7 @@ void Bbr3Flavour::bbr_set_pacing_rate(double gain)
 
 void Bbr3Flavour::updateTargetCwnd()
 {
-    state->m_targetCWnd = bbr_inflight(bbr_bw(), state->m_cWndGain);// + ackAggregationCwnd();
+    state->m_targetCWnd = bbr_inflight(bbr_bw(), state->m_cWndGain) + ackAggregationCwnd();
 }
 
 bool Bbr3Flavour::modulateCwndForRecovery()

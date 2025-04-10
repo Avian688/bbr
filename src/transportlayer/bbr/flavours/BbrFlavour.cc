@@ -129,18 +129,16 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
     // Check if recovery phase has ended
     if (state->lossRecovery && state->sack_enabled) {
         if (seqGE(state->snd_una, state->recoveryPoint)) {
+            state->snd_cwnd = state->ssthresh;
             EV_INFO   << " Loss Recovery terminated.\n";
             state->m_packetConservation = false;
             tcp_state = CA_OPEN;
             restoreCwnd();
             state->lossRecovery = false;
-            std::cout << "\n LOSS RECOVERY TERMINATED AT " << simTime() << endl;
-            state->snd_cwnd = state->ssthresh;
             conn->emit(lossRecoverySignal, 0);
             EV_INFO << "lossRecovery = false, m_packetConservation = false, state->snd_cwnd = " << state->snd_cwnd << "\n";
         }
         else{
-            std::cout << "\n DOING IMMEDIATE DATA RETRANSMIT AT " << simTime() << endl;
             dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
             conn->emit(lossRecoverySignal, state->snd_cwnd);
         }
@@ -705,27 +703,26 @@ void BbrFlavour::receivedDuplicateAck()
     bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(state->snd_una+state->snd_mss);
     EV_INFO << "dupAck received. Total DupAcks: " << state->dupacks << "\n";
     //bool isHighRxtLost = false;
-    if (state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
+    bool rackLoss = dynamic_cast<TcpPacedConnection*>(conn)->checkRackLoss();
+    if ((rackLoss && !state->lossRecovery) || state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
             EV_INFO << "dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
                 if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
                     //mark head as lost
                     state->recoveryPoint = state->snd_max; // HighData = snd_max
+                    saveCwnd();
                     state->lossRecovery = true;
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
 
                     dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
                     //state->snd_cwnd = state->ssthresh;
-                    saveCwnd();
                     tcp_state = CA_RECOVERY;
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
                     //state->snd_cwnd = state->ssthresh;
                     state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
                     state->m_packetConservation = true;
-                    //state->m_nextRoundDelivered = dynamic_cast<BbrConnection*>(conn)->getDelivered();
-                    std::cout << "\n DOING IMMEDIATE RETRANSMIT AT " << simTime() << endl;
                     dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
                 }
             }
