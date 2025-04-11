@@ -107,7 +107,7 @@ class Bbr3Flavour : public BbrFamily
     static simsignal_t restoreCwndSignal;
 
     simtime_t rtt;
-    boost::random::mt19937 gen{6};
+    boost::random::mt19937 gen;
     uint32_t m_extraAcked[2]{0, 0};
     uint32_t bw_hi[2]{0, 0};
 

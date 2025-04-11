@@ -96,6 +96,7 @@ void Bbr3Flavour::established(bool active)
         m_extraAcked[0] = 0;
         m_extraAcked[1] = 0;
         state->m_isInitialized = true;
+        gen.seed((int)(simTime().dbl()*1000));
     }
     //state->m_ackEpochTime = simTime();
     EV_DETAIL << "BBR initial CWND is set to " << state->snd_cwnd << "\n";
@@ -208,7 +209,6 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
     }
 
     bbr_main();
-
     sendData(false);
 
     conn->emit(maxBandwidthFilterSignal, bbr_max_bw());
@@ -296,6 +296,7 @@ void Bbr3Flavour::receivedDuplicateAck()
                     if(tcp_state != CA_LOSS){
                         tcp_state = CA_RECOVERY;
                     }
+
 
                     //std::cout << "\n STATE: " << tcp_state << " at " << simTime() << endl;
                     dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
@@ -780,12 +781,13 @@ uint32_t Bbr3Flavour::bbr_target_inflight()
 void Bbr3Flavour::bbr_start_bw_probe_down()
 {
     bbr_reset_congestion_signals();
-    state->m_bwProbeUpCount = std::numeric_limits<uint32_t>::max ();
+    state->m_bwProbeUpCount = std::numeric_limits<uint32_t>::max();
     bbr_pick_probe_wait();
     state->m_cycleStamp = simTime();
     m_ackPhase = BbrAckPhase_t::BBR_ACKS_PROBE_STOPPING;
     state->m_nextRoundDelivered = state->m_delivered;
     bbr_set_cycle_idx(BBR_BW_PROBE_DOWN);
+    //std::cout << "\n PROBING DOWN AT " << simTime() << endl;
 }
 
 void Bbr3Flavour::bbr_update_min_rtt()
@@ -1060,13 +1062,13 @@ void Bbr3Flavour::bbr_set_cwnd()
         goto done;
     }
 
-    if (state->lossRecovery)
-    {
-        if (modulateCwndForRecovery())
-        {
-            goto done;
-        }
-    }
+//    if (state->lossRecovery)
+//    {
+//        if (modulateCwndForRecovery())
+//        {
+//            goto done;
+//        }
+//    }
 
     if (!state->m_packetConservation){
         if (state->m_fullBwReached)
@@ -1117,7 +1119,7 @@ void Bbr3Flavour::bbr_update_gains()
 void Bbr3Flavour::bbr_set_pacing_rate(double gain)
 {
     uint32_t rate = (double) gain * (double) bbr_bw();
-    rate *= (1.f - state->m_pacingMargin);
+    rate *= ((double)1 - state->m_pacingMargin);
     uint32_t maxRate = 500000000; // 4Gbps
     rate = std::min(rate, maxRate);
 

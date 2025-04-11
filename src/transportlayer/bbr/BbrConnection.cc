@@ -155,8 +155,9 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 
             updateWndInfo(tcpHeader);
 
-            if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
-                skbDelivered(tcpHeader->getAckNo());
+            std::list<uint32_t> skbDeliveredList = rexmitQueue->getDiscardList(tcpHeader->getAckNo());
+            for (uint32_t endSeqNo : skbDeliveredList) {
+                skbDelivered(endSeqNo);
             }
 //
             uint32_t currentDelivered  = m_delivered - previousDelivered;
@@ -272,10 +273,10 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         // acked data no longer needed in send queue
 
         // acked data no longer needed in rexmit queue
-        if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
-            skbDelivered(tcpHeader->getAckNo());
+        std::list<uint32_t> skbDeliveredList = rexmitQueue->getDiscardList(discardUpToSeq);
+        for (uint32_t endSeqNo : skbDeliveredList) {
+            skbDelivered(endSeqNo);
         }
-
         // acked data no longer needed in send queue
         sendQueue->discardUpTo(discardUpToSeq);
         enqueueData();
