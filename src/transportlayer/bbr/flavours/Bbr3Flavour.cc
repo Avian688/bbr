@@ -96,7 +96,6 @@ void Bbr3Flavour::established(bool active)
         m_extraAcked[0] = 0;
         m_extraAcked[1] = 0;
         state->m_isInitialized = true;
-        gen.seed((int)(simTime().dbl()*1000));
     }
     //state->m_ackEpochTime = simTime();
     EV_DETAIL << "BBR initial CWND is set to " << state->snd_cwnd << "\n";
@@ -794,7 +793,7 @@ void Bbr3Flavour::bbr_update_min_rtt()
 {
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     bool probe_rtt_expired = simTime() > (state->m_probeRttMinStamp + state->bbr_probe_rtt_win);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_probeRttMin || (probe_rtt_expired /* && rs.is ack delayed*/ ))) // rs in ns3 does not store min rtt anywhere but the tcb object does
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_probeRttMin || (probe_rtt_expired /* && rs.is ack delayed*/ ))) // rs in ns3 does not store min rtt anywhere but the tcb object does
     {
         state->m_probeRttMin = state->m_lastRtt;
         state->m_probeRttMinStamp = simTime();

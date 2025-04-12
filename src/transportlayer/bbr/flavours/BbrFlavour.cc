@@ -129,10 +129,10 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
     // Check if recovery phase has ended
     if (state->lossRecovery && state->sack_enabled) {
         if (seqGE(state->snd_una, state->recoveryPoint)) {
-            state->snd_cwnd = state->ssthresh;
             EV_INFO   << " Loss Recovery terminated.\n";
             state->m_packetConservation = false;
             tcp_state = CA_OPEN;
+            state->snd_cwnd = state->ssthresh;
             restoreCwnd();
             state->lossRecovery = false;
             conn->emit(lossRecoverySignal, 0);
@@ -331,7 +331,7 @@ void BbrFlavour::checkDrain()
 void BbrFlavour::updateRTprop()
 {
     state->m_minRttExpired = simTime() > (state->m_minRttStamp + state->m_minRttFilterLen);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_minRtt || state->m_minRttExpired))
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_minRtt || state->m_minRttExpired))
     {
         state->m_minRtt = state->m_lastRtt;
         state->m_minRttStamp = simTime();
@@ -664,7 +664,7 @@ void BbrFlavour::initPacingRate()
 
 void BbrFlavour::updateTargetCwnd()
 {
-    state->m_targetCWnd = inFlight(state->m_cWndGain);// + ackAggregationCwnd();
+    state->m_targetCWnd = inFlight(state->m_cWndGain) + ackAggregationCwnd();
 
     EV_INFO << "updateTargetCwnd to " << state->m_targetCWnd << "\n";
     conn->emit(targetCwndSignal, state->m_targetCWnd);
