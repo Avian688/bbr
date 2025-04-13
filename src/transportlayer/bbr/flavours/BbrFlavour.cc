@@ -134,6 +134,7 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
             tcp_state = CA_OPEN;
             state->snd_cwnd = state->ssthresh;
             restoreCwnd();
+            //state->snd_cwnd = state->ssthresh;
             state->lossRecovery = false;
             conn->emit(lossRecoverySignal, 0);
             EV_INFO << "lossRecovery = false, m_packetConservation = false, state->snd_cwnd = " << state->snd_cwnd << "\n";
@@ -331,7 +332,7 @@ void BbrFlavour::checkDrain()
 void BbrFlavour::updateRTprop()
 {
     state->m_minRttExpired = simTime() > (state->m_minRttStamp + state->m_minRttFilterLen);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_minRtt || state->m_minRttExpired))
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_minRtt || state->m_minRttExpired))
     {
         state->m_minRtt = state->m_lastRtt;
         state->m_minRttStamp = simTime();
@@ -664,7 +665,7 @@ void BbrFlavour::initPacingRate()
 
 void BbrFlavour::updateTargetCwnd()
 {
-    state->m_targetCWnd = inFlight(state->m_cWndGain) + ackAggregationCwnd();
+    state->m_targetCWnd = inFlight(state->m_cWndGain);// + ackAggregationCwnd();
 
     EV_INFO << "updateTargetCwnd to " << state->m_targetCWnd << "\n";
     conn->emit(targetCwndSignal, state->m_targetCWnd);
@@ -717,7 +718,6 @@ void BbrFlavour::receivedDuplicateAck()
 
                     dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
-                    //state->snd_cwnd = state->ssthresh;
                     tcp_state = CA_RECOVERY;
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
                     //state->snd_cwnd = state->ssthresh;

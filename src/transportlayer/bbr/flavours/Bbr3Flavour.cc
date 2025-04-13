@@ -278,6 +278,7 @@ void Bbr3Flavour::receivedDuplicateAck()
             if (state->sack_enabled) {
                 if ((state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) && !state->lossRecovery ) { // HighACK = snd_una
                     state->recoveryPoint = state->snd_max; // HighData = snd_max
+                    bbr_save_cwnd();
                     //mark head as lost
                     dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
