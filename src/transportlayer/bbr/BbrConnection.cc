@@ -171,7 +171,7 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             updateSample(currentDelivered, lost, false, priorInFlight, connMinRtt);
 
             tcpAlgorithm->receivedDuplicateAck();
-
+            isRetransDataAcked = false;
             sendPendingData();
 
             m_reorder = false;
@@ -276,6 +276,11 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         std::list<uint32_t> skbDeliveredList = rexmitQueue->getDiscardList(discardUpToSeq);
         for (uint32_t endSeqNo : skbDeliveredList) {
             skbDelivered(endSeqNo);
+            if(state->lossRecovery){
+                if(rexmitQueue->isRetransmittedDataAcked(endSeqNo)){
+                    isRetransDataAcked = true;
+                }
+            }
         }
         // acked data no longer needed in send queue
         sendQueue->discardUpTo(discardUpToSeq);
@@ -304,6 +309,7 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             updateSample(currentDelivered, lost, false, priorInFlight, connMinRtt);
 
             dynamic_cast<BbrFamily*>(tcpAlgorithm)->receivedDataAck(old_snd_una);
+            isRetransDataAcked = false;
             // in the receivedDataAck we need the old value
             state->dupacks = 0;
 

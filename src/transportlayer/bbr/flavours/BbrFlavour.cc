@@ -129,11 +129,13 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
     // Check if recovery phase has ended
     if (state->lossRecovery && state->sack_enabled) {
         if (seqGE(state->snd_una, state->recoveryPoint)) {
+
             EV_INFO   << " Loss Recovery terminated.\n";
+            state->snd_cwnd = state->ssthresh;
             state->m_packetConservation = false;
             tcp_state = CA_OPEN;
-            state->snd_cwnd = state->ssthresh;
             restoreCwnd();
+
             //state->snd_cwnd = state->ssthresh;
             state->lossRecovery = false;
             conn->emit(lossRecoverySignal, 0);
