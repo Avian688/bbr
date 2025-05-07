@@ -726,6 +726,7 @@ void BbrFlavour::receivedDuplicateAck()
                     state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
                     state->m_packetConservation = true;
                     dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
+                    conn->emit(recoveryPointSignal, state->recoveryPoint);
                 }
             }
 

@@ -186,13 +186,11 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
     // Check if recovery phase has ended
 
     if (state->lossRecovery && state->sack_enabled) {
-
         if (seqGE(state->snd_una, state->recoveryPoint)) {
             EV_INFO << "Loss Recovery terminated.\n";
             state->lossRecovery = false;
             state->m_packetConservation = false;
             state->snd_cwnd = state->ssthresh;
-            //restoreCwnd();
             conn->emit(lossRecoverySignal, 0);
             if(tcp_state == CA_LOSS){
                 bbr_exit_loss_recovery();
@@ -202,7 +200,9 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
             //std::cout << "\n STATE: " << tcp_state << " at " << simTime() << endl;
         }
         else{
-            dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
+            if(dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit()){
+                bbr_note_loss();
+            }
             conn->emit(lossRecoverySignal, state->snd_cwnd);
         }
     }
@@ -313,10 +313,10 @@ void Bbr3Flavour::receivedDuplicateAck()
             EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
             conn->emit(highRxtSignal, state->highRxt);
     }
-    else if (state->dupacks > state->dupthresh) {
-
-        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
-
+    else if(rackLoss){
+        if (bbr_is_inflight_too_high()) {
+            bbr_handle_inflight_too_high(false);
+        }
     }
 
     bbr_main();
@@ -1203,6 +1203,23 @@ void Bbr3Flavour::bbr_exit_loss_recovery()
     state->snd_cwnd = std::max(state->snd_cwnd, state->m_priorCwnd);
     state->m_packetConservation = true;
     state->m_tryFastPath = 0;
+}
+
+void Bbr3Flavour::bbr_note_loss()
+{
+    if (!state->m_lossInRound)  /* first loss in this round trip? */
+        state->m_lossRoundDelivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();  /* set round trip */
+    state->m_lossInRound = true;
+    state->m_lossInCycle = true;
+}
+
+void Bbr3Flavour::notifyLost()
+{
+    bbr_note_loss();
+    if (bbr_is_inflight_too_high()) {
+        bbr_handle_inflight_too_high(false);
+    }
+
 }
 
 } // namespace tcp

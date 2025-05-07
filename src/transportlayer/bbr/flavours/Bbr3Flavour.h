@@ -270,6 +270,10 @@ class Bbr3Flavour : public BbrFamily
     void bbr_exit_loss_recovery();
 
     void bbr_main();
+
+    void bbr_note_loss();
+
+    void notifyLost() override;
   public:
     /** Constructor */
     Bbr3Flavour();
