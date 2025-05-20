@@ -685,7 +685,6 @@ bool Bbr3Flavour::bbr_adapt_upper_bounds()
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     if (m_ackPhase == BbrAckPhase_t::BBR_ACKS_PROBE_STARTING && state->m_roundStart)
         m_ackPhase = BbrAckPhase_t::BBR_ACKS_PROBE_FEEDBACK;
-
     if (m_ackPhase == BbrAckPhase_t::BBR_ACKS_PROBE_STOPPING && state->m_roundStart)
     {
         state->m_bwProbeSamples = 0;
@@ -704,15 +703,14 @@ bool Bbr3Flavour::bbr_adapt_upper_bounds()
     {
         if (state->m_bwProbeSamples)
                 bbr_handle_inflight_too_high(false);
-    } else {
-
+    }
+    else {
         if (m_inflightHi == std::numeric_limits<uint32_t>::max ())
             return false;
-
         if (dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() > m_inflightHi)
             m_inflightHi = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight();
 
-        if (m_state == BBR_PROBE_BW && state->m_cycleIndex == BBR_BW_PROBE_UP){}
+        if (m_state == BBR_PROBE_BW && state->m_cycleIndex == BBR_BW_PROBE_UP)
             bbr_probe_inflight_hi_upward();
     }
     return false;
