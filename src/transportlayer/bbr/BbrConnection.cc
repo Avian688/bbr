@@ -152,7 +152,6 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             }
             scoreboardUpdated = false;
 
-
             updateWndInfo(tcpHeader);
 
             std::list<uint32_t> skbDeliveredList = rexmitQueue->getDiscardList(tcpHeader->getAckNo());

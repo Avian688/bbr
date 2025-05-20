@@ -125,7 +125,6 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
 {
     TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
     EV_INFO << "receivedDataAck: firstSeqAcked" << firstSeqAcked << "\n";
-    //dynamic_cast<BbrConnection*>(conn)->updateInFlight();
     // Check if recovery phase has ended
     if (state->lossRecovery && state->sack_enabled) {
         if (seqGE(state->snd_una, state->recoveryPoint)) {
@@ -223,7 +222,6 @@ void BbrFlavour::updateControlParameters()
     setPacingRate(state->m_pacingGain);
     setSendQuantum();
     setCwnd();
-
 }
 
 void BbrFlavour::updateBottleneckBandwidth()
@@ -748,7 +746,6 @@ void BbrFlavour::receivedDuplicateAck()
     state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
     updateModelAndState();
     updateControlParameters();
-
     sendData(false);
 
     conn->emit(maxBandwidthFilterSignal, m_maxBwFilter.GetBest());
