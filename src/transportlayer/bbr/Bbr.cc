@@ -13,11 +13,9 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/.
 // 
 
-#include "Bbr.h"
-
 #include <inet/networklayer/ipv4/Ipv4Header_m.h>
 
-
+#include "Bbr.h"
 namespace inet {
 namespace tcp {
 
