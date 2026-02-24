@@ -172,7 +172,6 @@ void Bbr3Flavour::processRexmitTimer(TcpEventCode &event) {
 
     state->afterRto = true;
     tcp_state = CA_LOSS;
-    std::cout << "\n LOSS" << endl;
     dynamic_cast<TcpPacedConnection*>(conn)->cancelPaceTimer();
     sendData(false);
 }
@@ -250,8 +249,8 @@ void Bbr3Flavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
 
     state->rexmit_timeout = rto;
 
-    state->m_lastRtt = srtt;
-    dynamic_cast<TcpPacedConnection*>(conn)->setMinRtt(std::min(srtt, dynamic_cast<TcpPacedConnection*>(conn)->getMinRtt()));
+    state->m_lastRtt = newRTT;
+    dynamic_cast<TcpPacedConnection*>(conn)->setMinRtt(std::min(newRTT, dynamic_cast<TcpPacedConnection*>(conn)->getMinRtt()));
 
     // record statistics
     EV_DETAIL << "Measured RTT=" << (newRTT * 1000) << "ms, updated SRTT=" << (srtt * 1000)
@@ -348,7 +347,7 @@ uint32_t Bbr3Flavour::bbr_update_round_start()
     state->m_roundStart = false;
 
     if (rs.m_interval > 0 &&
-        state->m_txItemDelivered >= state->m_nextRoundDelivered) // equivalent to !before
+        rs.m_priorDelivered >= state->m_nextRoundDelivered) // equivalent to !before
     {
         state->m_nextRoundDelivered = state->m_delivered;
         state->m_roundCount++;
@@ -792,7 +791,7 @@ void Bbr3Flavour::bbr_update_min_rtt()
 {
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     bool probe_rtt_expired = simTime() > (state->m_probeRttMinStamp + state->bbr_probe_rtt_win);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_probeRttMin || (probe_rtt_expired /* && rs.is ack delayed*/ ))) // rs in ns3 does not store min rtt anywhere but the tcb object does
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_probeRttMin || (probe_rtt_expired /* && rs.is ack delayed*/ ))) // rs in ns3 does not store min rtt anywhere but the tcb object does
     {
         state->m_probeRttMin = state->m_lastRtt;
         state->m_probeRttMinStamp = simTime();
@@ -1127,7 +1126,7 @@ void Bbr3Flavour::bbr_set_pacing_rate(double gain)
     }
 
     //double pace = state->m_minRtt.dbl()/(((double)rate*state->m_lastRtt.dbl())/(double)state->m_segmentSize);
-    double pace = (double)1/(((double)rate)/(double)state->m_segmentSize);
+    double pace = (double)1/(((double)rate)/(double)state->m_segmentSize+59);
     if ((state->m_fullBwReached || pace < dynamic_cast<BbrConnection*>(conn)->getPacingRate().dbl()) && rate > 0)
     {
         dynamic_cast<BbrConnection*>(conn)->changeIntersendingTime(pace);
@@ -1199,7 +1198,7 @@ uint32_t Bbr3Flavour::ackAggregationCwnd()
 void Bbr3Flavour::bbr_exit_loss_recovery()
 {
     state->snd_cwnd = std::max(state->snd_cwnd, state->m_priorCwnd);
-    state->m_packetConservation = true;
+    //state->m_packetConservation = true;
     state->m_tryFastPath = 0;
 }
 

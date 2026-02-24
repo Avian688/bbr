@@ -192,8 +192,8 @@ void BbrFlavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
 
     state->rexmit_timeout = rto;
 
-    state->m_lastRtt = srtt;
-    dynamic_cast<TcpPacedConnection*>(conn)->setMinRtt(std::min(srtt, dynamic_cast<TcpPacedConnection*>(conn)->getMinRtt()));
+    state->m_lastRtt = newRTT;
+    dynamic_cast<TcpPacedConnection*>(conn)->setMinRtt(std::min(newRTT, dynamic_cast<TcpPacedConnection*>(conn)->getMinRtt()));
 
     // record statistics
     EV_DETAIL << "Measured RTT=" << (newRTT * 1000) << "ms, updated SRTT=" << (srtt * 1000)
@@ -558,7 +558,7 @@ void BbrFlavour::setPacingRate(double gain)
     }
 
     //double pace = state->m_minRtt.dbl()/(((double)rate*state->m_lastRtt.dbl())/(double)state->m_segmentSize);
-    double pace = (double)1/(((double)rate)/(double)state->m_segmentSize);
+    double pace = (double)1/(((double)rate)/(double)state->m_segmentSize +59);
     if ((state->m_isPipeFilled || pace < dynamic_cast<BbrConnection*>(conn)->getPacingRate().dbl()) && rate > 0)
     {
         dynamic_cast<BbrConnection*>(conn)->changeIntersendingTime(pace);
