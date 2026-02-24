@@ -791,7 +791,7 @@ void Bbr3Flavour::bbr_update_min_rtt()
 {
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     bool probe_rtt_expired = simTime() > (state->m_probeRttMinStamp + state->bbr_probe_rtt_win);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_probeRttMin || (probe_rtt_expired /* && rs.is ack delayed*/ ))) // rs in ns3 does not store min rtt anywhere but the tcb object does
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_probeRttMin || (probe_rtt_expired /* && rs.is ack delayed*/ ))) // rs in ns3 does not store min rtt anywhere but the tcb object does
     {
         state->m_probeRttMin = state->m_lastRtt;
         state->m_probeRttMinStamp = simTime();
