@@ -558,7 +558,7 @@ void BbrFlavour::setPacingRate(double gain)
     }
 
     //double pace = state->m_minRtt.dbl()/(((double)rate*state->m_lastRtt.dbl())/(double)state->m_segmentSize);
-    double pace = (double)1/(((double)rate)/(double)state->m_segmentSize +59);
+    double pace = (double)1/(((double)rate)/(double)state->m_segmentSize);
     if ((state->m_isPipeFilled || pace < dynamic_cast<BbrConnection*>(conn)->getPacingRate().dbl()) && rate > 0)
     {
         dynamic_cast<BbrConnection*>(conn)->changeIntersendingTime(pace);
