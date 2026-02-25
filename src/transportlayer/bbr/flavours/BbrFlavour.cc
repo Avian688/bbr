@@ -332,7 +332,7 @@ void BbrFlavour::checkDrain()
 void BbrFlavour::updateRTprop()
 {
     state->m_minRttExpired = simTime() > (state->m_minRttStamp + state->m_minRttFilterLen);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_minRtt || state->m_minRttExpired))
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_minRtt || state->m_minRttExpired))
     {
         state->m_minRtt = state->m_lastRtt;
         state->m_minRttStamp = simTime();
