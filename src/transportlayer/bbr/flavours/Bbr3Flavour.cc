@@ -456,7 +456,7 @@ void Bbr3Flavour::bbr_update_ack_aggregation()
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     uint32_t expectedAcked;
     uint32_t extraAck;
-    uint32_t epochProp;
+    double epochProp;
     if (!state->m_extraAckedGain || rs.m_ackedSacked <= 0 || rs.m_delivered < 0)
     {
         return;
@@ -474,7 +474,7 @@ void Bbr3Flavour::bbr_update_ack_aggregation()
     }
 
     epochProp = simTime().dbl() - state->m_ackEpochTime.dbl();
-    expectedAcked = bbr_bw() * epochProp;
+    expectedAcked = static_cast<uint32_t>(bbr_bw() * epochProp);
 
     if (state->m_ackEpochAcked <= expectedAcked ||
         (state->m_ackEpochAcked + rs.m_ackedSacked >= state->m_ackEpochAckedResetThresh))

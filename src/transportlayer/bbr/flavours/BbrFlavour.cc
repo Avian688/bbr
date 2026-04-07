@@ -16,7 +16,7 @@ namespace tcp {
 #define MIN_REXMIT_TIMEOUT     0.2   // 1s
 #define MAX_REXMIT_TIMEOUT     240   // 2 * MSL (RFC 1122)
 
-const double BbrFlavour::PACING_GAIN_CYCLE[] = {5.0 / 4, 3.0 / 4, 1, 1, 1, 1, 1, 1};
+const double BbrFlavour::PACING_GAIN_CYCLE[] = {1.25, 0.75, 1, 1, 1, 1, 1, 1};
 
 Register_Class(BbrFlavour);
 
@@ -244,7 +244,7 @@ void BbrFlavour::updateAckAggregation()
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     uint32_t expectedAcked;
     uint32_t extraAck;
-    uint32_t epochProp;
+    double epochProp;
     if (!state->m_extraAckedGain || rs.m_ackedSacked <= 0 || rs.m_delivered < 0)
     {
         return;
@@ -262,7 +262,7 @@ void BbrFlavour::updateAckAggregation()
     }
 
     epochProp = simTime().dbl() - state->m_ackEpochTime.dbl();
-    expectedAcked = m_maxBwFilter.GetBest() * epochProp;
+    expectedAcked = static_cast<uint32_t>(m_maxBwFilter.GetBest() * epochProp);
 
     if (state->m_ackEpochAcked <= expectedAcked ||
         (state->m_ackEpochAcked + rs.m_ackedSacked >= state->m_ackEpochAckedResetThresh))

@@ -112,7 +112,7 @@ class Bbr3Flavour : public BbrFamily
     uint32_t bw_hi[2]{0, 0};
 
     BbrMode_t m_state{BbrMode_t::BBR_STARTUP};
-    BbrAckPhase_t m_ackPhase = BbrAckPhase_t::BBR_ACKS_PROBE_FEEDBACK; //!< BBR ack phase
+    BbrAckPhase_t m_ackPhase = BbrAckPhase_t::BBR_ACKS_INIT; //!< BBR ack phase
     BbrState tcp_state = BbrState::CA_OPEN;
 
     uint32_t m_bwLatest = std::numeric_limits<uint32_t>::max ();         //!< Maximum delivered bandwidth in last round trip
@@ -297,4 +297,3 @@ class Bbr3Flavour : public BbrFamily
 } // namespace inet
 
 #endif
-
