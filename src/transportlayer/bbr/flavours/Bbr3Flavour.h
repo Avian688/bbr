@@ -107,7 +107,7 @@ class Bbr3Flavour : public BbrFamily
     static simsignal_t restoreCwndSignal;
 
     simtime_t rtt;
-    boost::random::mt19937 gen{6};
+    boost::random::mt19937 gen;
     uint32_t m_extraAcked[2]{0, 0};
     uint32_t bw_hi[2]{0, 0};
 
@@ -181,7 +181,13 @@ class Bbr3Flavour : public BbrFamily
 
     bool bbr_is_inflight_too_high(); //NEEDED
 
+    bool bbr_is_inflight_too_high_sample(const BbrConnection::RateSample& rs);
+
+    bool bbr_is_cwnd_limited();
+
     void bbr_handle_inflight_too_high(bool rsmode);
+
+    void bbr_handle_inflight_too_high_sample(const BbrConnection::RateSample& rs);
 
     void bbr_probe_inflight_hi_upward();
 

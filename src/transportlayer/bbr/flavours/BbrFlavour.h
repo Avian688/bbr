@@ -84,7 +84,7 @@ class BbrFlavour : public BbrFamily
     static simsignal_t restoreCwndSignal;
 
     simtime_t rtt;
-    boost::random::mt19937 gen{6};
+    boost::random::mt19937 gen;
     uint32_t m_extraAcked[2] = {0, 0};
 
     BbrMode_t m_state{BbrMode_t::BBR_STARTUP};
@@ -195,4 +195,3 @@ class BbrFlavour : public BbrFamily
 } // namespace inet
 
 #endif
-

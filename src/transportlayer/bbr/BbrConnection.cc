@@ -165,7 +165,7 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             updateInFlight();
 ////
             uint32_t currentLost = m_bytesLoss;
-            uint32_t lost = (currentLost > previousLost) ? currentLost - previousLost : previousLost - currentLost;
+            uint32_t lost = (currentLost > previousLost) ? currentLost - previousLost : 0;
 ////
             updateSample(currentDelivered, lost, false, priorInFlight, connMinRtt);
 
@@ -302,7 +302,7 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             updateInFlight();
 
             uint32_t currentLost = m_bytesLoss;
-            uint32_t lost = (currentLost > previousLost) ? currentLost - previousLost : previousLost - currentLost;
+            uint32_t lost = (currentLost > previousLost) ? currentLost - previousLost : 0;
             // notify
 
             updateSample(currentDelivered, lost, false, priorInFlight, connMinRtt);

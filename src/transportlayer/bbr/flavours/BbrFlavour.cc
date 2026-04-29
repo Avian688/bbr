@@ -13,6 +13,31 @@
 namespace inet {
 namespace tcp {
 
+namespace {
+
+uint32_t mixSeedByte(uint32_t seed, uint8_t value)
+{
+    seed ^= value;
+    seed *= 16777619u;
+    return seed;
+}
+
+uint32_t makeDeterministicConnectionSeed(const TcpConnection *conn)
+{
+    uint32_t seed = 2166136261u;
+    const std::string fullPath = conn->getFullPath();
+    for (unsigned char ch : fullPath)
+        seed = mixSeedByte(seed, ch);
+
+    uint32_t socketId = static_cast<uint32_t>(conn->getSocketId());
+    for (int shift = 0; shift < 32; shift += 8)
+        seed = mixSeedByte(seed, static_cast<uint8_t>((socketId >> shift) & 0xffu));
+
+    return seed != 0 ? seed : 1u;
+}
+
+} // namespace
+
 #define MIN_REXMIT_TIMEOUT     0.2   // 1s
 #define MAX_REXMIT_TIMEOUT     240   // 2 * MSL (RFC 1122)
 
@@ -50,6 +75,8 @@ void BbrFlavour::initialize()
 void BbrFlavour::established(bool active)
 {
     if(!state->m_isInitialized){
+        // Keep probe phase randomness reproducible while separating flows.
+        gen.seed(makeDeterministicConnectionSeed(conn));
         dynamic_cast<BbrConnection*>(conn)->changeIntersendingTime(0.0000001); //do not pace intial packets as RTT is unknown
 
         state->snd_cwnd = 4 * state->snd_mss; // RFC 2001
@@ -110,7 +137,8 @@ void BbrFlavour::processRexmitTimer(TcpEventCode &event) {
     saveCwnd();
     state->m_roundStart = true;
     state->m_fullBandwidth = 0;
-    state->snd_cwnd = state->snd_mss*4;
+    // Linux tcp_enter_loss() uses packets_in_flight + 1, not BBR's 4-packet floor.
+    state->snd_cwnd = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() + state->snd_mss;
     conn->emit(cwndSignal, state->snd_cwnd);
 
     EV_INFO << " Rexmit Timeout! Recovery point: " << state->recoveryPoint << ", cwnd: "<< state->snd_cwnd << "\n";
@@ -332,7 +360,7 @@ void BbrFlavour::checkDrain()
 void BbrFlavour::updateRTprop()
 {
     state->m_minRttExpired = simTime() > (state->m_minRttStamp + state->m_minRttFilterLen);
-    if (state->m_lastRtt >= 0 && (state->m_lastRtt < state->m_minRtt || state->m_minRttExpired))
+    if (state->m_lastRtt >= 0 && (state->m_lastRtt <= state->m_minRtt || state->m_minRttExpired))
     {
         state->m_minRtt = state->m_lastRtt;
         state->m_minRttStamp = simTime();
@@ -473,7 +501,7 @@ void BbrFlavour::handleProbeRTT()
 {
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     uint32_t totalBytes = state->m_delivered + dynamic_cast<BbrConnection*>(conn)->getBytesInFlight();
-    state->m_appLimited = false;
+    dynamic_cast<TcpPacedConnection*>(conn)->setAppLimited(totalBytes != 0 ? totalBytes : 1);
 
     if (state->m_probeRttDoneStamp == 0 && dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() <= state->m_minPipeCwnd)
     {

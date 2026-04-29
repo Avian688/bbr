@@ -8,15 +8,41 @@
 
 #include "Bbr3Flavour.h"
 #include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSendQueue.h"
 #include "inet/transportlayer/tcp/flavours/TcpReno.h"
 
 namespace inet {
 namespace tcp {
 
+namespace {
+
+uint32_t mixSeedByte(uint32_t seed, uint8_t value)
+{
+    seed ^= value;
+    seed *= 16777619u;
+    return seed;
+}
+
+uint32_t makeDeterministicConnectionSeed(const TcpConnection *conn)
+{
+    uint32_t seed = 2166136261u;
+    const std::string fullPath = conn->getFullPath();
+    for (unsigned char ch : fullPath)
+        seed = mixSeedByte(seed, ch);
+
+    uint32_t socketId = static_cast<uint32_t>(conn->getSocketId());
+    for (int shift = 0; shift < 32; shift += 8)
+        seed = mixSeedByte(seed, static_cast<uint8_t>((socketId >> shift) & 0xffu));
+
+    return seed != 0 ? seed : 1u;
+}
+
+} // namespace
+
 #define MIN_REXMIT_TIMEOUT     0.2   // 1s
 #define MAX_REXMIT_TIMEOUT     240   // 2 * MSL (RFC 1122)
 
-const double Bbr3Flavour::PACING_GAIN_CYCLE[] = {5.0 / 4,  91.0 / 100, 1, 1 };
+const double Bbr3Flavour::PACING_GAIN_CYCLE[] = {1.25,  0.91, 1, 1 };
 
 Register_Class(Bbr3Flavour);
 
@@ -65,6 +91,8 @@ void Bbr3Flavour::initialize()
 void Bbr3Flavour::established(bool active)
 {
     if(!state->m_isInitialized){
+        // Keep probe phase randomness reproducible while separating flows.
+        gen.seed(makeDeterministicConnectionSeed(conn));
         dynamic_cast<BbrConnection*>(conn)->changeIntersendingTime(0.0000001); //do not pace intial packets as RTT is unknown
 
         state->snd_cwnd = 4 * state->snd_mss; // RFC 2001
@@ -164,7 +192,8 @@ void Bbr3Flavour::processRexmitTimer(TcpEventCode &event) {
     {
       m_inflightLo = std::max(state->snd_cwnd, state->m_priorCwnd);
     }
-    state->snd_cwnd = state->snd_mss*4;
+    // Linux tcp_enter_loss() uses packets_in_flight + 1, not BBR's 4-packet floor.
+    state->snd_cwnd = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() + state->snd_mss;
     conn->emit(cwndSignal, state->snd_cwnd);
 
     EV_INFO << "Begin Slow Start: resetting cwnd to " << state->snd_cwnd
@@ -353,6 +382,7 @@ uint32_t Bbr3Flavour::bbr_update_round_start()
         state->m_roundCount++;
         state->m_roundStart = true;
         state->m_packetConservation = false;
+        state->m_roundsSinceProbe = std::min<uint32_t>(state->m_roundsSinceProbe + 1, 0xFFu);
 
         conn->emit(roundCountSignal, state->m_roundCount);
         conn->emit(nextRoundDeliveredSignal, state->m_nextRoundDelivered);
@@ -522,26 +552,24 @@ void Bbr3Flavour::bbr_check_loss_too_high_in_startup()
 
 bool Bbr3Flavour::bbr_is_inflight_too_high()
 {
-    BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
-    if (rs.m_bytesLoss > 0 && dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() > 0)
-    {
-        //if (state->m_cycleIndex == BBR_BW_PROBE_UP)
-        //    std::cout << "bytes lost " << rs.m_bytesLoss << " bytes in flight " << dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() * 0.02;
-        if (rs.m_bytesLoss > (dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() * 0.02))
-        {
-            return true;
-        }
+    return bbr_is_inflight_too_high_sample(dynamic_cast<BbrConnection*>(conn)->getRateSample());
+}
 
+bool Bbr3Flavour::bbr_is_inflight_too_high_sample(const BbrConnection::RateSample& rs)
+{
+    if (rs.m_bytesLoss == 0 || rs.m_txInFlight == 0)
+        return false;
 
-    }
-    return false;
+    const uint32_t lossThresh = static_cast<uint32_t>(
+            static_cast<uint64_t>(rs.m_txInFlight) * state->bbr_loss_thresh);
+    return rs.m_bytesLoss > lossThresh;
 }
 
 void Bbr3Flavour::bbr_handle_queue_too_high_in_startup()
 {
     state->m_fullBwReached = true;
     uint32_t bdp = bbr_inflight(bbr_max_bw(), 1);
-    m_inflightHi = bdp;
+    m_inflightHi = std::max(bdp, state->m_inflightLatest);
 }
 
 uint32_t Bbr3Flavour::bbr_inflight(uint32_t bw, double gain)
@@ -648,10 +676,11 @@ void Bbr3Flavour::bbr_update_cycle_phase(const struct bbr_context *ctx)
                 state->m_stoppedRiskyProbe = true;
                 is_bw_probe_done = true;
             } else {
-                if (inflight >= bbr_inflight(bw, state->m_pacingGain))   {       //bbr_inflight(tcb, bw, m_pacingGain)) {
+                if (bbr_is_cwnd_limited() && state->snd_cwnd >= m_inflightHi) {
+                    /* Linux treats inflight_hi as the limiter here: reset the
+                     * full_bw plateau detector, but keep probing upward. */
                     bbr_reset_full_bw();
                     state->m_fullBandwidth = ctx->sample_bw;
-                    is_bw_probe_done = true;
                 }
                 else if (state->m_fullBandwidthNow) {
                     is_bw_probe_done = true;
@@ -706,8 +735,8 @@ bool Bbr3Flavour::bbr_adapt_upper_bounds()
     else {
         if (m_inflightHi == std::numeric_limits<uint32_t>::max ())
             return false;
-        if (dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() > m_inflightHi)
-            m_inflightHi = dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight();
+        if (rs.m_txInFlight > m_inflightHi)
+            m_inflightHi = rs.m_txInFlight;
 
         if (m_state == BBR_PROBE_BW && state->m_cycleIndex == BBR_BW_PROBE_UP)
             bbr_probe_inflight_hi_upward();
@@ -723,6 +752,17 @@ bool Bbr3Flavour::bbr_check_time_to_probe_bw()
         return true;
     }
     return false;
+}
+
+bool Bbr3Flavour::bbr_is_cwnd_limited()
+{
+    auto *sendQueue = conn->getSendQueue();
+    if (sendQueue == nullptr)
+        return false;
+
+    const uint32_t bytesInFlight = dynamic_cast<TcpPacedConnection *>(conn)->getBytesInFlight();
+    const uint32_t queuedToSend = sendQueue->getBytesAvailable(state->snd_nxt);
+    return queuedToSend > 0 && bytesInFlight + state->m_segmentSize >= state->snd_cwnd;
 }
 
 void Bbr3Flavour::bbr_start_bw_probe_refill(uint32_t bw_probe_up_rounds)
@@ -749,20 +789,20 @@ void Bbr3Flavour::bbr_set_cycle_idx(uint32_t cycle_idx)
     state->m_tryFastPath = false;
 }
 
-void Bbr3Flavour::bbr_handle_inflight_too_high(bool rsmode)
+void Bbr3Flavour::bbr_handle_inflight_too_high(bool /*rsmode*/)
 {
-    BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
+    bbr_handle_inflight_too_high_sample(dynamic_cast<BbrConnection*>(conn)->getRateSample());
+}
+
+void Bbr3Flavour::bbr_handle_inflight_too_high_sample(const BbrConnection::RateSample& rs)
+{
     state->m_prevProbeTooHigh = true;
     state->m_bwProbeSamples = 0;
-    if (rsmode && !rs.m_isAppLimited)
-    {
-        m_inflightHi = std::max(rs.m_priorInFlight, static_cast<uint32_t>(bbr_target_inflight() * (1 - state->bbr_beta)));
-        goto done2;
-
+    if (!rs.m_isAppLimited) {
+        const uint32_t inflightFloor = rs.m_txInFlight > 0 ? rs.m_txInFlight : rs.m_priorInFlight;
+        const uint32_t targetInflight = static_cast<uint32_t>(bbr_target_inflight() * (1 - state->bbr_beta));
+        m_inflightHi = std::max(inflightFloor, targetInflight);
     }
-    if (!rs.m_isAppLimited)
-        m_inflightHi = (bbr_target_inflight() * (1 - state->bbr_beta));
-    done2:
     if (m_state == BbrMode_t::BBR_PROBE_BW && state->m_cycleIndex == BBR_BW_PROBE_UP)
     {
         bbr_start_bw_probe_down();
@@ -818,7 +858,8 @@ void Bbr3Flavour::bbr_update_min_rtt()
 
     if (m_state == BbrMode_t::BBR_PROBE_RTT)
     {
-        state->m_appLimited = (state->m_delivered + dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight()) < 0 ;
+        const uint32_t totalBytes = state->m_delivered + dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight();
+        dynamic_cast<TcpPacedConnection*>(conn)->setAppLimited(totalBytes != 0 ? totalBytes : 1);
         if (state->m_probeRttDoneStamp == 0 && dynamic_cast<TcpPacedConnection*>(conn)->getBytesInFlight() <= bbr_probe_rtt_cwnd())
         {
             state->m_probeRttDoneStamp = simTime() + state->bbr_probe_rtt_mode_ms;
@@ -1004,11 +1045,8 @@ void Bbr3Flavour::bbr_raise_inflight_hi_slope()
 void Bbr3Flavour::bbr_probe_inflight_hi_upward()
 {
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
-    if (state->snd_cwnd < m_inflightHi)
-    {
-        state->m_bwProbeUpAcks = 0;
+    if (!bbr_is_cwnd_limited() || state->snd_cwnd < m_inflightHi)
         return;
-    }
 
     state->m_bwProbeUpAcks += rs.m_ackedSacked;
     if (state->m_bwProbeUpAcks >= state->m_bwProbeUpCount)
@@ -1136,6 +1174,7 @@ void Bbr3Flavour::bbr_set_pacing_rate(double gain)
 void Bbr3Flavour::updateTargetCwnd()
 {
     state->m_targetCWnd = bbr_inflight(bbr_bw(), state->m_cWndGain) + ackAggregationCwnd();
+    conn->emit(targetCwndSignal, state->m_targetCWnd);
 }
 
 bool Bbr3Flavour::modulateCwndForRecovery()
@@ -1213,9 +1252,16 @@ void Bbr3Flavour::bbr_note_loss()
 void Bbr3Flavour::notifyLost()
 {
     bbr_note_loss();
-    if (bbr_is_inflight_too_high()) {
-        bbr_handle_inflight_too_high(false);
-    }
+    auto lossSample = dynamic_cast<TcpPacedConnection*>(conn)->consumeLossNotificationSample();
+    if (!lossSample.m_valid)
+        return;
+
+    BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
+    rs.m_bytesLoss = lossSample.m_bytesLoss;
+    rs.m_txInFlight = lossSample.m_txInFlight;
+    rs.m_isAppLimited = lossSample.m_isAppLimited;
+    if (bbr_is_inflight_too_high_sample(rs))
+        bbr_handle_inflight_too_high_sample(rs);
 
 }
 
