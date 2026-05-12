@@ -1021,7 +1021,7 @@ void Bbr3Flavour::bbr_pick_probe_wait()
     boost::random::uniform_int_distribution<> dist(0, 2);
     state->m_roundsSinceProbe = (uint)dist(gen);
     boost::random::uniform_int_distribution<> dist2(0, 1000);
-    state->m_probeWaitTime = 2 + (dist2(gen))/1000;
+    state->m_probeWaitTime = 2 + dist2(gen) / 1000.0;
 }
 
 uint32_t Bbr3Flavour::bbr_inflight_with_headroom()
@@ -1137,8 +1137,8 @@ void Bbr3Flavour::bbr_update_gains()
         case BBR_PROBE_BW:
             state->m_pacingGain = PACING_GAIN_CYCLE[state->m_cycleIndex];
             state->m_cWndGain   = 2;
-            if (state->bbr_bw_probe_cwnd_gain !=0  && state->m_cycleIndex == BBR_BW_PROBE_UP)
-                state->m_cWndGain += 1 * state->bbr_bw_probe_cwnd_gain / 4;
+            if (state->bbr_bw_probe_cwnd_gain != 0 && state->m_cycleIndex == BBR_BW_PROBE_UP)
+                state->m_cWndGain += state->bbr_bw_probe_cwnd_gain / 4.0;
             conn->emit(pacingGainSignal, state->m_pacingGain);
             break;
         case BBR_PROBE_RTT:
