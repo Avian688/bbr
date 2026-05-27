@@ -66,6 +66,7 @@ bool BbrConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
     uint32_t previousLost = m_bytesLoss; //TODO Create Sack method to get exact amount of lost packets
     uint32_t priorInFlight = m_bytesInFlight;//get current BytesInFlight somehow
     int payloadLength = tcpSegment->getByteLength() - B(tcpHeader->getHeaderLength()).get();
+    beginRateSample();
     //updateInFlight();
 
     // ECN

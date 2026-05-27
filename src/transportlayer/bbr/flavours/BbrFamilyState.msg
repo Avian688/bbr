@@ -144,7 +144,7 @@ struct BbrFamilyStateVariables extends TcpTahoeRenoFamilyStateVariables
 
     const uint32_t bbr_full_bw_cnt = 3;
 
-    const double bbr_startup_pacing_gain = 277.0 / 100.0 + 1.0;
+    const double bbr_startup_pacing_gain = 2.7734375;
 
     const uint32_t bbr_startup_cwnd_gain = 2;
 

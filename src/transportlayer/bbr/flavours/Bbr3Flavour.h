@@ -115,7 +115,7 @@ class Bbr3Flavour : public BbrFamily
     BbrAckPhase_t m_ackPhase = BbrAckPhase_t::BBR_ACKS_INIT; //!< BBR ack phase
     BbrState tcp_state = BbrState::CA_OPEN;
 
-    uint32_t m_bwLatest = std::numeric_limits<uint32_t>::max ();         //!< Maximum delivered bandwidth in last round trip
+    uint32_t m_bwLatest = 0;         //!< Maximum delivered bandwidth in last round trip
     uint32_t m_bwLo = std::numeric_limits<uint32_t>::max ();
     uint32_t m_inflightLo = std::numeric_limits<uint32_t>::max ();       //!< Lower bound of inflight data range
     uint32_t m_inflightHi = std::numeric_limits<uint32_t>::max ();
@@ -188,6 +188,8 @@ class Bbr3Flavour : public BbrFamily
     void bbr_handle_inflight_too_high(bool rsmode);
 
     void bbr_handle_inflight_too_high_sample(const BbrConnection::RateSample& rs);
+
+    uint32_t bbr_inflight_hi_from_lost_sample(const BbrConnection::RateSample& rs);
 
     void bbr_probe_inflight_hi_upward();
 

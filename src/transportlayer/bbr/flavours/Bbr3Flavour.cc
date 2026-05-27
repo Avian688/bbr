@@ -5,6 +5,7 @@
 //
 
 #include <algorithm> // min,max
+#include <cmath>
 
 #include "Bbr3Flavour.h"
 #include "inet/transportlayer/tcp/Tcp.h"
@@ -113,8 +114,8 @@ void Bbr3Flavour::established(bool active)
         initFullPipe();
         m_state = BbrMode_t::BBR_STARTUP;
         conn->emit(stateSignal, m_state);
-        state->m_pacingGain = state->m_highGain;
-        state->m_cWndGain = state->m_highGain;
+        state->m_pacingGain = state->bbr_startup_pacing_gain;
+        state->m_cWndGain = state->bbr_startup_cwnd_gain;
 
         initPacingRate();
         state->m_ackEpochTime = simTime();
@@ -217,14 +218,15 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
         if (seqGE(state->snd_una, state->recoveryPoint)) {
             EV_INFO << "Loss Recovery terminated.\n";
             state->lossRecovery = false;
-            state->m_packetConservation = false;
-            state->snd_cwnd = state->ssthresh;
+            //state->m_packetConservation = false;
             conn->emit(lossRecoverySignal, 0);
             if(tcp_state == CA_LOSS){
                 bbr_exit_loss_recovery();
             }
             tcp_state = CA_OPEN;
-            //bbr_exit_loss_recovery();
+            // Linux BBRv3 skips Reno's cwnd=ssthresh recovery exit for cong_control
+            // algorithms. The bbr_main() call below updates cwnd via bbr_set_cwnd()
+            // and bbr_bound_cwnd_for_inflight_model() once for this ACK.
             //std::cout << "\n STATE: " << tcp_state << " at " << simTime() << endl;
         }
         else{
@@ -312,14 +314,10 @@ void Bbr3Flavour::receivedDuplicateAck()
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
                     //bbr_save_cwnd();
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-                    //state->snd_cwnd = state->ssthresh;
-                    //state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
-                    //state->m_packetConservation = true;
                     state->lossRecovery = true;
 //                    if(tcp_state == CA_LOSS){
 //                        bbr_exit_loss_recovery();
 //                    }
-                    //bbr_exit_loss_recovery();
                     //bbr_exit_loss_recovery();
                     if(tcp_state != CA_LOSS){
                         tcp_state = CA_RECOVERY;
@@ -809,6 +807,23 @@ void Bbr3Flavour::bbr_handle_inflight_too_high_sample(const BbrConnection::RateS
     }
 }
 
+uint32_t Bbr3Flavour::bbr_inflight_hi_from_lost_sample(const BbrConnection::RateSample& rs)
+{
+    if (rs.m_txInFlight == 0 || rs.m_bytesLoss == 0)
+        return rs.m_txInFlight;
+
+    // Approximate Linux bbr_inflight_hi_from_lost_skb() for an aggregate loss
+    // notification: find the inflight point where the loss threshold was crossed.
+    const uint32_t lostBytes = std::min(rs.m_bytesLoss, rs.m_txInFlight);
+    const uint32_t inflightBeforeLostBatch = rs.m_txInFlight - lostBytes;
+    const double safeLossPrefix = std::ceil(
+            (static_cast<double>(inflightBeforeLostBatch) * state->bbr_loss_thresh) /
+            (1.0 - state->bbr_loss_thresh));
+    const uint32_t lossPrefix = std::min<uint32_t>(lostBytes, static_cast<uint32_t>(safeLossPrefix));
+
+    return std::min(rs.m_txInFlight, inflightBeforeLostBatch + lossPrefix);
+}
+
 uint32_t Bbr3Flavour::bbr_target_inflight()
 {
     uint32_t bdp = bbr_inflight(bbr_bw(), 1);   //REPLACE WITH BBR VERSION LATER
@@ -1065,7 +1080,7 @@ void Bbr3Flavour::bbr_reset_congestion_signals()
 {
     state->m_lossInRound = false;
     state->m_ecnInRound = false;
-    //m_lossInCycle = false;
+    state->m_lossInCycle = false;
     state->m_ecn_in_cycle = false;
     m_bwLatest = 0;
     state->m_inflightLatest = 0;
@@ -1073,7 +1088,8 @@ void Bbr3Flavour::bbr_reset_congestion_signals()
 
 bool Bbr3Flavour::bbr_is_reno_coexistence_probe_time()
 {
-    int32_t rounds = std::min<int32_t>(state->bbr_bw_probe_max_rounds, bbr_target_inflight());
+    uint32_t targetInflightPackets = std::max<uint32_t>(1, bbr_target_inflight() / state->m_segmentSize);
+    int32_t rounds = std::min<int32_t>(state->bbr_bw_probe_max_rounds, targetInflightPackets);
     return state->m_roundsSinceProbe >= rounds;
 }
 
@@ -1110,7 +1126,7 @@ void Bbr3Flavour::bbr_set_cwnd()
         {
             state->snd_cwnd = std::min(state->snd_cwnd + (uint32_t)rs.m_ackedSacked, state->m_targetCWnd);
         }
-        else if (state->snd_cwnd < state->m_targetCWnd || state->m_delivered < state->m_initialCWnd)
+        else if (state->snd_cwnd < state->m_targetCWnd || state->snd_cwnd < 2 * state->m_initialCWnd)
         {
             state->snd_cwnd  = state->snd_cwnd  + rs.m_ackedSacked;
         }
@@ -1125,13 +1141,13 @@ void Bbr3Flavour::bbr_update_gains()
 {
     switch (m_state) {
         case BBR_STARTUP:
-            state->m_pacingGain = 2.89;
-            state->m_cWndGain   = 2.89;
+            state->m_pacingGain = state->bbr_startup_pacing_gain;
+            state->m_cWndGain   = state->bbr_startup_cwnd_gain;
             conn->emit(pacingGainSignal, state->m_pacingGain);
             break;
         case BBR_DRAIN:
-            state->m_pacingGain = 1.0 * 1000.0 / 2885.0;  /* slow, to drain */
-            state->m_cWndGain   = 2;  /* keep cwnd */
+            state->m_pacingGain = state->bbr_drain_gain;
+            state->m_cWndGain   = state->bbr_startup_cwnd_gain;
             conn->emit(pacingGainSignal, state->m_pacingGain);
             break;
         case BBR_PROBE_BW:
@@ -1253,15 +1269,23 @@ void Bbr3Flavour::notifyLost()
 {
     bbr_note_loss();
     auto lossSample = dynamic_cast<TcpPacedConnection*>(conn)->consumeLossNotificationSample();
+
     if (!lossSample.m_valid)
         return;
 
+    if (!state->m_bwProbeSamples)
+        return;
+
+    // Linux BBRv3 only lowers inflight_hi while ACK/loss samples are
+    // reflecting the active bandwidth probe.
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
     rs.m_bytesLoss = lossSample.m_bytesLoss;
     rs.m_txInFlight = lossSample.m_txInFlight;
     rs.m_isAppLimited = lossSample.m_isAppLimited;
-    if (bbr_is_inflight_too_high_sample(rs))
+    if (bbr_is_inflight_too_high_sample(rs)) {
+        rs.m_txInFlight = bbr_inflight_hi_from_lost_sample(rs);
         bbr_handle_inflight_too_high_sample(rs);
+    }
 
 }
 
