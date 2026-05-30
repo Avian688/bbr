@@ -432,8 +432,7 @@ void Bbr3Flavour::bbr_update_congestion_signals(struct bbr_context *ctx)
 
     uint32_t bw = ctx->sample_bw;
 
-    bool notAppLimited = true;
-    if (notAppLimited || bw >= bbr_max_bw())
+    if (!rs.m_isAppLimited || bw >= bbr_max_bw())
         bbr_take_max_bw_sample(bw);
 
     state->m_lossInRound |= (rs.m_bytesLoss > 0);
@@ -598,7 +597,7 @@ uint32_t Bbr3Flavour::bbr_bdp(uint32_t bw, double gain)
 void Bbr3Flavour::bbr_check_full_bw_reached(const struct bbr_context *ctx)
 {
     BbrConnection::RateSample rs = dynamic_cast<BbrConnection*>(conn)->getRateSample();
-    if (state->m_fullBandwidthNow)
+    if (state->m_fullBandwidthNow || rs.m_isAppLimited)
         return;
     /* Check if Bottleneck bandwidth is still growing*/
     if (ctx->sample_bw >= state->m_fullBandwidth * 1.25) // REPLACE CONSTANT WITH PARAMETER
@@ -716,8 +715,7 @@ bool Bbr3Flavour::bbr_adapt_upper_bounds()
     {
         state->m_bwProbeSamples = 0;
         m_ackPhase = BbrAckPhase_t::BBR_ACKS_INIT;
-        bool notAppLimited = true;
-        if (m_state == BbrMode_t::BBR_PROBE_BW && notAppLimited)
+        if (m_state == BbrMode_t::BBR_PROBE_BW && !rs.m_isAppLimited)
             bbr_advance_max_bw_filter();
 
         if (m_state == BbrMode_t::BBR_PROBE_BW && state->m_stoppedRiskyProbe && !state->m_prevProbeTooHigh)
@@ -798,8 +796,7 @@ void Bbr3Flavour::bbr_handle_inflight_too_high_sample(const BbrConnection::RateS
 {
     state->m_prevProbeTooHigh = true;
     state->m_bwProbeSamples = 0;
-    bool notAppLimited = true;
-    if (notAppLimited) {
+    if (!rs.m_isAppLimited) {
         const uint32_t inflightFloor = rs.m_txInFlight > 0 ? rs.m_txInFlight : rs.m_priorInFlight;
         const uint32_t targetInflight = static_cast<uint32_t>(bbr_target_inflight() * (1 - state->bbr_beta));
         m_inflightHi = std::max(inflightFloor, targetInflight);
