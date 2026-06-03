@@ -776,7 +776,7 @@ void BbrFlavour::receivedDuplicateAck()
                     state->lossRecovery = true;
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
 
-                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
+                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLostIfRackDisabled();
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
                     tcp_state = CA_RECOVERY;
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;

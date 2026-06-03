@@ -315,7 +315,7 @@ void Bbr3Flavour::receivedDuplicateAck()
                     bbr_save_cwnd();
                     //mark head as lost
                     // dupthresh / highRxt fallback path
-                    //dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
+                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLostIfRackDisabled();
                     dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
                     //bbr_save_cwnd();
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
