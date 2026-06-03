@@ -282,6 +282,8 @@ class Bbr3Flavour : public BbrFamily
     void bbr_note_loss();
 
     void notifyLost() override;
+
+    void rackLossDetected() override;
   public:
     /** Constructor */
     Bbr3Flavour();

@@ -133,8 +133,11 @@ void BbrFlavour::recalculateSlowStartThreshold() {
 }
 
 void BbrFlavour::processRexmitTimer(TcpEventCode &event) {
-    TcpPacedFamily::processRexmitTimer(event);
     saveCwnd();
+    TcpPacedFamily::processRexmitTimer(event);
+    if (event == TCP_E_ABORT)
+        return;
+
     state->m_roundStart = true;
     state->m_fullBandwidth = 0;
     // Linux tcp_enter_loss() uses packets_in_flight + 1, not BBR's 4-packet floor.
@@ -144,7 +147,10 @@ void BbrFlavour::processRexmitTimer(TcpEventCode &event) {
     EV_INFO << " Rexmit Timeout! Recovery point: " << state->recoveryPoint << ", cwnd: "<< state->snd_cwnd << "\n";
 
     state->afterRto = true;
+    state->recoveryPoint = state->snd_max;
     tcp_state = CA_LOSS;
+    conn->emit(recoveryPointSignal, state->recoveryPoint);
+    conn->emit(lossRecoverySignal, state->snd_cwnd);
     dynamic_cast<TcpPacedConnection*>(conn)->cancelPaceTimer();
     sendData(false);
 }
@@ -154,7 +160,7 @@ void BbrFlavour::receivedDataAck(uint32_t firstSeqAcked)
     TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
     EV_INFO << "receivedDataAck: firstSeqAcked" << firstSeqAcked << "\n";
     // Check if recovery phase has ended
-    if (state->lossRecovery && state->sack_enabled) {
+    if ((state->lossRecovery || tcp_state == CA_LOSS) && state->sack_enabled) {
         if (seqGE(state->snd_una, state->recoveryPoint)) {
 
             EV_INFO   << " Loss Recovery terminated.\n";
@@ -528,7 +534,8 @@ void BbrFlavour::handleProbeRTT()
 
 void BbrFlavour::saveCwnd()
 {
-    if ((!state->lossRecovery) && m_state != BbrMode_t::BBR_PROBE_RTT)
+    const bool inCaRecovery = tcp_state == CA_RECOVERY || tcp_state == CA_LOSS;
+    if (!inCaRecovery && m_state != BbrMode_t::BBR_PROBE_RTT)
     {
         state->m_priorCwnd = state->snd_cwnd;
     }
@@ -726,13 +733,39 @@ void BbrFlavour::initFullPipe()
     state->m_fullBandwidthCount = 0;
 }
 
+void BbrFlavour::rackLossDetected()
+{
+    auto pacedConn = dynamic_cast<TcpPacedConnection *>(conn);
+    if (!state->sack_enabled)
+        return;
+
+    if (!state->lossRecovery) {
+        state->recoveryPoint = state->snd_max;
+        saveCwnd();
+        state->lossRecovery = true;
+        tcp_state = CA_RECOVERY;
+        conn->emit(recoveryPointSignal, state->recoveryPoint);
+    }
+
+    pacedConn->updateInFlight();
+    state->snd_cwnd = pacedConn->getBytesInFlight() +
+            std::max(pacedConn->getLastAckedSackedBytes(), state->m_segmentSize);
+    state->m_packetConservation = true;
+
+    if (pacedConn->doRetransmit())
+        restartRexmitTimer();
+
+    conn->emit(highRxtSignal, state->highRxt);
+    if (state->lossRecovery)
+        conn->emit(lossRecoverySignal, state->snd_cwnd);
+}
+
 void BbrFlavour::receivedDuplicateAck()
 {
     bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(state->snd_una+state->snd_mss);
     EV_INFO << "dupAck received. Total DupAcks: " << state->dupacks << "\n";
     //bool isHighRxtLost = false;
-    bool rackLoss = dynamic_cast<TcpPacedConnection*>(conn)->checkRackLoss();
-    if ((rackLoss && !state->lossRecovery) || state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
+    if (state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
             EV_INFO << "dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {

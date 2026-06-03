@@ -166,6 +166,8 @@ class BbrFlavour : public BbrFamily
 
     virtual uint32_t ackAggregationCwnd();
 
+    virtual void rackLossDetected() override;
+
     virtual void modulateCwndForProbeRTT();
 
     virtual void initRoundCounting();

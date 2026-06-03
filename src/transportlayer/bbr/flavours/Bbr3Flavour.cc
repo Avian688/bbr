@@ -184,12 +184,14 @@ void Bbr3Flavour::processRexmitTimer(TcpEventCode &event) {
         //std::cout << "\n EXITED LOSS RECOVERY" << endl;
     //}
 
-    TcpPacedFamily::processRexmitTimer(event);
-
     bbr_save_cwnd();
+    TcpPacedFamily::processRexmitTimer(event);
+    if (event == TCP_E_ABORT)
+        return;
+
     state->m_roundStart = true;
     bbr_reset_full_bw();
-    if (bbr_is_probing_bandwidth() && m_inflightLo == std::numeric_limits<uint32_t>::max ())
+    if (!bbr_is_probing_bandwidth() && m_inflightLo == std::numeric_limits<uint32_t>::max ())
     {
       m_inflightLo = std::max(state->snd_cwnd, state->m_priorCwnd);
     }
@@ -201,7 +203,10 @@ void Bbr3Flavour::processRexmitTimer(TcpEventCode &event) {
                    << ", ssthresh=" << state->ssthresh << "\n";
 
     state->afterRto = true;
+    state->recoveryPoint = state->snd_max;
     tcp_state = CA_LOSS;
+    conn->emit(recoveryPointSignal, state->recoveryPoint);
+    conn->emit(lossRecoverySignal, state->snd_cwnd);
     dynamic_cast<TcpPacedConnection*>(conn)->cancelPaceTimer();
     sendData(false);
 }
@@ -214,7 +219,7 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
     //dynamic_cast<BbrConnection*>(conn)->updateInFlight();
     // Check if recovery phase has ended
 
-    if (state->lossRecovery && state->sack_enabled) {
+    if ((state->lossRecovery || tcp_state == CA_LOSS) && state->sack_enabled) {
         if (seqGE(state->snd_una, state->recoveryPoint)) {
             EV_INFO << "Loss Recovery terminated.\n";
             state->lossRecovery = false;
@@ -301,8 +306,7 @@ void Bbr3Flavour::receivedDuplicateAck()
 //        std::cout << "\n TRUE!! TEST WORKED" << endl;
 //    }
     //bool isHighRxtLost = false;
-    bool rackLoss = dynamic_cast<TcpPacedConnection*>(conn)->checkRackLoss();
-    if ((rackLoss && !state->lossRecovery) || state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
+    if (state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
             EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
@@ -310,15 +314,9 @@ void Bbr3Flavour::receivedDuplicateAck()
                     state->recoveryPoint = state->snd_max; // HighData = snd_max
                     bbr_save_cwnd();
                     //mark head as lost
-                    if (rackLoss) {
-                        // RACK should already have marked lost packets.
-                        dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
-                    }
-                    else {
-                        // dupthresh / highRxt fallback path
-                        //dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
-                        dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
-                    }
+                    // dupthresh / highRxt fallback path
+                    //dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLost();
+                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
                     //bbr_save_cwnd();
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
                     state->lossRecovery = true;
@@ -345,11 +343,6 @@ void Bbr3Flavour::receivedDuplicateAck()
             }
             EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
             conn->emit(highRxtSignal, state->highRxt);
-    }
-    else if(rackLoss){
-        if (bbr_is_inflight_too_high()) {
-            bbr_handle_inflight_too_high(false);
-        }
     }
 
     bbr_main();
@@ -819,16 +812,26 @@ uint32_t Bbr3Flavour::bbr_inflight_hi_from_lost_sample(const BbrConnection::Rate
     if (rs.m_txInFlight == 0 || rs.m_bytesLoss == 0)
         return rs.m_txInFlight;
 
-    // Approximate Linux bbr_inflight_hi_from_lost_skb() for an aggregate loss
-    // notification: find the inflight point where the loss threshold was crossed.
+    // Linux bbr_inflight_hi_from_lost_skb() is called once per lost skb. Our
+    // RACK/SACK path reports a batch, so approximate the skb that crossed the
+    // threshold as one MSS at the end of that batch, not the whole batch.
     const uint32_t lostBytes = std::min(rs.m_bytesLoss, rs.m_txInFlight);
-    const uint32_t inflightBeforeLostBatch = rs.m_txInFlight - lostBytes;
-    const double safeLossPrefix = std::ceil(
-            (static_cast<double>(inflightBeforeLostBatch) * state->bbr_loss_thresh) /
-            (1.0 - state->bbr_loss_thresh));
-    const uint32_t lossPrefix = std::min<uint32_t>(lostBytes, static_cast<uint32_t>(safeLossPrefix));
+    const uint32_t skbBytes = std::min<uint32_t>(state->m_segmentSize, lostBytes);
+    if (rs.m_txInFlight < skbBytes)
+        return std::numeric_limits<uint32_t>::max();
 
-    return std::min(rs.m_txInFlight, inflightBeforeLostBatch + lossPrefix);
+    const uint32_t inflightPrev = rs.m_txInFlight - skbBytes;
+    const uint32_t lostPrev = lostBytes - skbBytes;
+    const uint32_t lossBudget = static_cast<uint32_t>(
+            std::ceil(static_cast<double>(inflightPrev) * state->bbr_loss_thresh));
+    uint32_t lossPrefix = 0;
+    if (lostPrev < lossBudget) {
+        const double safeLossPrefix =
+                static_cast<double>(lossBudget - lostPrev) / (1.0 - state->bbr_loss_thresh);
+        lossPrefix = std::min<uint32_t>(skbBytes, static_cast<uint32_t>(std::ceil(safeLossPrefix)));
+    }
+
+    return std::min(rs.m_txInFlight, inflightPrev + lossPrefix);
 }
 
 uint32_t Bbr3Flavour::bbr_target_inflight()
@@ -973,7 +976,8 @@ void Bbr3Flavour::initPacingRate()
 
 void Bbr3Flavour::bbr_save_cwnd()
 {
-    if (!state->lossRecovery && m_state != BbrMode_t::BBR_PROBE_RTT)
+    const bool inCaRecovery = tcp_state == CA_RECOVERY || tcp_state == CA_LOSS;
+    if (!inCaRecovery && m_state != BbrMode_t::BBR_PROBE_RTT)
         state->m_priorCwnd = state->snd_cwnd;
     else
         state->m_priorCwnd = std::max(state->m_priorCwnd, state->snd_cwnd);
@@ -1270,6 +1274,30 @@ void Bbr3Flavour::bbr_note_loss()
         state->m_lossRoundDelivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();  /* set round trip */
     state->m_lossInRound = true;
     state->m_lossInCycle = true;
+}
+
+void Bbr3Flavour::rackLossDetected()
+{
+    auto pacedConn = dynamic_cast<TcpPacedConnection *>(conn);
+    if (!state->sack_enabled)
+        return;
+
+    if (!state->lossRecovery) {
+        state->recoveryPoint = state->snd_max;
+        bbr_save_cwnd();
+        state->lossRecovery = true;
+        if (tcp_state != CA_LOSS)
+            tcp_state = CA_RECOVERY;
+        conn->emit(recoveryPointSignal, state->recoveryPoint);
+    }
+
+    pacedConn->updateInFlight();
+    if (pacedConn->doRetransmit())
+        restartRexmitTimer();
+
+    conn->emit(highRxtSignal, state->highRxt);
+    if (state->lossRecovery)
+        conn->emit(lossRecoverySignal, state->snd_cwnd);
 }
 
 void Bbr3Flavour::notifyLost()

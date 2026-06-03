@@ -39,8 +39,6 @@ public:
 
 protected:
 
-    virtual bool processAckInEstabEtc(Packet *tcpSegment, const Ptr<const TcpHeader>& tcpHeader) override;
-
     virtual void initConnection(TcpOpenCommand *openCmd) override;
 
     virtual void initClonedConnection(TcpConnection *listenerConn) override;
