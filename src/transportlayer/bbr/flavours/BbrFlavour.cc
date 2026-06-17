@@ -739,18 +739,17 @@ void BbrFlavour::rackLossDetected()
     if (!state->sack_enabled)
         return;
 
+    pacedConn->updateInFlight();
     if (!state->lossRecovery) {
         state->recoveryPoint = state->snd_max;
         saveCwnd();
         state->lossRecovery = true;
         tcp_state = CA_RECOVERY;
+        state->snd_cwnd = pacedConn->getBytesInFlight() +
+                std::max(pacedConn->getLastAckedSackedBytes(), state->m_segmentSize);
+        state->m_packetConservation = true;
         conn->emit(recoveryPointSignal, state->recoveryPoint);
     }
-
-    pacedConn->updateInFlight();
-    state->snd_cwnd = pacedConn->getBytesInFlight() +
-            std::max(pacedConn->getLastAckedSackedBytes(), state->m_segmentSize);
-    state->m_packetConservation = true;
 
     if (pacedConn->doRetransmit())
         restartRexmitTimer();
@@ -762,10 +761,9 @@ void BbrFlavour::rackLossDetected()
 
 void BbrFlavour::receivedDuplicateAck()
 {
-    bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(state->snd_una+state->snd_mss);
+    auto pacedConn = dynamic_cast<TcpPacedConnection *>(conn);
     EV_INFO << "dupAck received. Total DupAcks: " << state->dupacks << "\n";
-    //bool isHighRxtLost = false;
-    if (state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
+    if (shouldEnterLossRecoveryOnDuplicateAck()) {
             EV_INFO << "dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
@@ -776,13 +774,14 @@ void BbrFlavour::receivedDuplicateAck()
                     state->lossRecovery = true;
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
 
-                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLostIfRackDisabled();
-                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
+                    pacedConn->setSackedHeadLostIfRackDisabled();
+                    pacedConn->updateInFlight();
                     tcp_state = CA_RECOVERY;
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-                    state->snd_cwnd = dynamic_cast<BbrConnection*>(conn)->getBytesInFlight() + std::max(dynamic_cast<TcpPacedConnection*>(conn)->getLastAckedSackedBytes(), state->m_segmentSize);
+                    state->snd_cwnd = pacedConn->getBytesInFlight() +
+                            std::max(pacedConn->getLastAckedSackedBytes(), state->m_segmentSize);
                     state->m_packetConservation = true;
-                    dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
+                    pacedConn->doRetransmit();
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
                 }
             }
@@ -796,11 +795,9 @@ void BbrFlavour::receivedDuplicateAck()
             EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
             conn->emit(highRxtSignal, state->highRxt);
     }
-    else if (state->dupacks > state->dupthresh) {
-
-        EV_INFO << "dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
-
-    }
+    else if (state->lossRecovery && state->dupacks > state->dupthresh)
+        EV_DETAIL << "Additional duplicate ACK during RACK recovery; cwnd remains "
+                  << state->snd_cwnd << "\n";
 
     state->m_delivered = dynamic_cast<TcpPacedConnection*>(conn)->getDelivered();
     updateModelAndState();

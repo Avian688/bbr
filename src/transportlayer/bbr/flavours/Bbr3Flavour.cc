@@ -223,7 +223,7 @@ void Bbr3Flavour::receivedDataAck(uint32_t firstSeqAcked)
         if (seqGE(state->snd_una, state->recoveryPoint)) {
             EV_INFO << "Loss Recovery terminated.\n";
             state->lossRecovery = false;
-            //state->m_packetConservation = false;
+            state->m_packetConservation = false;
             conn->emit(lossRecoverySignal, 0);
             if(tcp_state == CA_LOSS){
                 bbr_exit_loss_recovery();
@@ -301,12 +301,8 @@ void Bbr3Flavour::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
 
 void Bbr3Flavour::receivedDuplicateAck()
 {
-    bool isHighRxtLost = dynamic_cast<TcpPacedConnection*>(conn)->checkIsLost(state->snd_una+state->snd_mss);
-//    if(isHighRxtLost){
-//        std::cout << "\n TRUE!! TEST WORKED" << endl;
-//    }
-    //bool isHighRxtLost = false;
-    if (state->dupacks == state->dupthresh || (isHighRxtLost && !state->lossRecovery)) {
+    auto pacedConn = dynamic_cast<TcpPacedConnection *>(conn);
+    if (shouldEnterLossRecoveryOnDuplicateAck()) {
             EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
             if (state->sack_enabled) {
@@ -315,8 +311,8 @@ void Bbr3Flavour::receivedDuplicateAck()
                     bbr_save_cwnd();
                     //mark head as lost
                     // dupthresh / highRxt fallback path
-                    dynamic_cast<TcpPacedConnection*>(conn)->setSackedHeadLostIfRackDisabled();
-                    dynamic_cast<TcpPacedConnection*>(conn)->updateInFlight();
+                    pacedConn->setSackedHeadLostIfRackDisabled();
+                    pacedConn->updateInFlight();
                     //bbr_save_cwnd();
                     EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
                     state->lossRecovery = true;
@@ -329,8 +325,7 @@ void Bbr3Flavour::receivedDuplicateAck()
                     }
 
 
-                    //std::cout << "\n STATE: " << tcp_state << " at " << simTime() << endl;
-                    dynamic_cast<TcpPacedConnection*>(conn)->doRetransmit();
+                    pacedConn->doRetransmit();
                     conn->emit(recoveryPointSignal, state->recoveryPoint);
                 }
             }
